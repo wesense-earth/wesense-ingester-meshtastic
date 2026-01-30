@@ -1,0 +1,84 @@
+version: '3.8'
+
+# Sample docker-compose.yml for remote Docker host
+# Copy this file to your Docker host as docker-compose.yml
+# Customize the paths and environment variables for your setup
+
+services:
+  data-ingester:
+    # Use pre-built image (not 'build: .')
+    # Option 1: If loaded from tar file
+    image: wesense-ingester-meshtastic:latest
+
+    # Option 2: If pulled from Docker Hub (uncomment and modify)
+    # image: yourusername/wesense-ingester-meshtastic:latest
+
+    # Option 3: If pulled from private registry (uncomment and modify)
+    # image: your-registry.com:5000/wesense-ingester-meshtastic:latest
+
+    container_name: wesense-ingester-meshtastic
+    restart: unless-stopped
+
+    # Volume mounts - UPDATE THESE PATHS for your host system
+    volumes:
+      # Cache directory - absolute or relative path on host
+      - ./cache:/app/cache
+
+      # Config directory - must contain mqtt_regions.json
+      # IMPORTANT: Create this directory and add your config before starting
+      - ./config:/app/config:ro
+
+      # Logs directory
+      - ./logs:/app/logs
+
+      # Alternative: Use absolute paths
+      # - /opt/wesense/cache:/app/cache
+      # - /opt/wesense/config:/app/config:ro
+      # - /var/log/wesense:/app/logs
+
+    # Environment variables - UPDATE THESE for your setup
+    environment:
+      # ClickHouse Configuration
+      - CLICKHOUSE_HOST=your-clickhouse-host
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_DATABASE=wesense
+      - CLICKHOUSE_TABLE=sensor_readings
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=
+
+      # WeSense Output MQTT (for publishing decoded data)
+      - WESENSE_OUTPUT_BROKER=your-mqtt-broker
+      - WESENSE_OUTPUT_PORT=1883
+      - WESENSE_OUTPUT_USERNAME=
+      - WESENSE_OUTPUT_PASSWORD=
+
+      # Timezone - set to match your data source location
+      # Examples: UTC, America/New_York, Europe/London, Asia/Tokyo
+      - TZ=UTC
+
+      # Logging Configuration
+      - DEBUG=false                   # Enable/disable debug mode (true/false)
+      - LOG_LEVEL=INFO                # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+      - LOG_MAX_BYTES=10485760        # Max log file size in bytes (10485760 = 10MB)
+      - LOG_BACKUP_COUNT=5            # Number of backup log files to keep (5 = 50MB total)
+
+    # Network configuration
+    network_mode: bridge
+
+    # Optional: Resource limits
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '2'
+    #       memory: 1G
+    #     reservations:
+    #       cpus: '0.5'
+    #       memory: 512M
+
+    # Docker container logging (stdout/stderr)
+    # 1MB x 7 files = 7MB total, rolls over after 7 files
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "7"
