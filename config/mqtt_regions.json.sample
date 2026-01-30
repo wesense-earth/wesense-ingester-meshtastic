@@ -1,0 +1,43 @@
+{
+  "ANZ": {
+    "broker": "mqtt.meshtastic.org",
+    "port": 1883,
+    "username": "meshdev",
+    "password": "large4cats",
+    "topic": "msh/ANZ/#",
+    "cache_file": "cache/meshtastic_cache_anz.json",
+    "enabled": true,
+    "publish_to_wesense": true
+  },
+  "US": {
+    "broker": "mqtt.meshtastic.org",
+    "port": 1883,
+    "username": "meshdev",
+    "password": "large4cats",
+    "topic": "msh/US/#",
+    "cache_file": "cache/meshtastic_cache_us.json",
+    "enabled": true,
+    "publish_to_wesense": true
+  },
+  "EU_868": {
+    "broker": "mqtt.meshtastic.org",
+    "port": 1883,
+    "username": "meshdev",
+    "password": "large4cats",
+    "topic": "msh/EU_868/#",
+    "cache_file": "cache/meshtastic_cache_eu868.json",
+    "enabled": true,
+    "publish_to_wesense": true
+  },
+  "LOCAL": {
+    "broker": "your-local-mqtt-broker",
+    "port": 1883,
+    "username": "your-mqtt-username",
+    "password": "your-mqtt-password",
+    "topic": "msh/ANZ/2/e/#",
+    "cache_file": "cache/meshtastic_cache_local.json",
+    "enabled": false,
+    "publish_to_wesense": true,
+    "note": "Local MQTT broker for community nodes"
+  }
+}

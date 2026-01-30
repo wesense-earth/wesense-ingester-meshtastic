@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Cache and logs - these will be mounted as volumes
+cache/
+logs/
+*.log
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation and test files
+*.md
+docs/
+test_*.py
+testlog.log
+
+# Scripts not needed in container
+backfill_*.py
+migrate_*.py
+start.sh
+
+# Docker files
+Dockerfile
+docker-compose.yml
+docker-compose.remote-host.yml
+.dockerignore
+.env
+.env.example
+build-image.sh
+*.tar
