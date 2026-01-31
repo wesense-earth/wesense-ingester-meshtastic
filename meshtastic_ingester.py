@@ -191,7 +191,23 @@ class MeshtasticIngester:
         self.publisher.connect()
 
         # Region state
-        self.regions = load_regions_config()
+        if MESHTASTIC_MODE == "community":
+            # Community mode: single local MQTT source (env vars), no regions config needed
+            self.regions = {
+                "LOCAL": {
+                    "broker": os.getenv("MQTT_BROKER", os.getenv("LOCAL_MQTT_HOST", "localhost")),
+                    "port": int(os.getenv("MQTT_PORT", os.getenv("LOCAL_MQTT_PORT", "1883"))),
+                    "username": os.getenv("MQTT_USERNAME", os.getenv("LOCAL_MQTT_USER", "")),
+                    "password": os.getenv("MQTT_PASSWORD", os.getenv("LOCAL_MQTT_PASSWORD", "")),
+                    "topic": os.getenv("MQTT_SUBSCRIBE_TOPIC", "msh/+/2/e/#"),
+                    "cache_file": "cache/meshtastic_cache_local.json",
+                    "enabled": True,
+                    "publish_to_wesense": True,
+                }
+            }
+        else:
+            # Public mode: multiple regions from config file
+            self.regions = load_regions_config()
         self.stats = {
             region: {
                 "messages": 0,
