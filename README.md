@@ -1,120 +1,134 @@
 # WeSense Ingester - Meshtastic
 
-Specialized ingester for Meshtastic environmental sensor data. Subscribes to the public Meshtastic MQTT broker, decodes Meshtastic protobuf, caches positions, correlates position and telemetry data, performs reverse geocoding, and publishes decoded JSON to a unified MQTT topic.
+Decodes environmental sensor data from Meshtastic mesh networks. Subscribes to public and community Meshtastic MQTT brokers, decodes protobuf, correlates position + telemetry, reverse geocodes, and publishes to ClickHouse and MQTT.
 
-## Why a Specialized Ingester?
+> For detailed documentation, see the [Wiki](https://github.com/wesense-earth/wesense-ingester-meshtastic/wiki).
+> Read on for a project overview and quick install instructions.
 
-Meshtastic data requires special handling because position and telemetry arrive in **separate messages**, often minutes or hours apart:
+## Overview
 
-| Message Type  | Content                     | Timing                                        |
-| ------------- | --------------------------- | --------------------------------------------- |
-| POSITION_APP  | lat/lon, altitude           | Sent periodically (e.g., every 30 min)        |
-| TELEMETRY_APP | temperature, humidity, etc. | Sent with sensor readings (e.g., every 5 min) |
+Meshtastic environmental data is challenging because position and telemetry arrive as **separate messages**, often minutes apart. This ingester caches positions per node, holds pending telemetry until a position is known, and correlates data before publishing. It also handles AES-CTR decryption, deduplication (mesh flooding sends the same packet multiple times), and offline reverse geocoding via GeoNames.
 
-The ingester must:
+Supports two modes via the `MESHTASTIC_MODE` environment variable:
+- **`public`** (default) — subscribes to `mqtt.meshtastic.org`
+- **`community`** — subscribes to a private community gateway
 
-1. **Cache positions** per node (persisted to disk, 7-day TTL, survives restarts)
-2. **Hold pending telemetry** until a position is known
-3. **Correlate** position + telemetry before publishing
-4. **Filter** to only environmental telemetry (ignore chat, device metrics, etc.)
+Uses [wesense-ingester-core](https://github.com/wesense-earth/wesense-ingester-core) for ClickHouse writing, MQTT publishing, geocoding, deduplication, and logging.
+
+## Quick Install (Recommended)
+
+Most users should deploy via [wesense-deploy](https://github.com/wesense-earth/wesense-deploy), which orchestrates all WeSense services using Docker Compose profiles:
+
+```bash
+# Clone the deploy repo
+git clone https://github.com/wesense-earth/wesense-deploy.git
+cd wesense-deploy
+
+# Configure
+cp .env.sample .env
+# Edit .env with your settings
+
+# Start as a contributor (ingesters only, sends to remote hub)
+docker compose --profile contributor up -d
+
+# Or as a full station (includes EMQX, ClickHouse, Respiro map)
+docker compose --profile station up -d
+```
+
+For Unraid or manual deployments, use the docker-run script:
+
+```bash
+./scripts/docker-run.sh station
+```
+
+See [Deployment Personas](https://github.com/wesense-earth/wesense-deploy) for all options.
+
+## Docker (Standalone)
+
+For running this ingester independently (e.g. on a separate host):
+
+```bash
+docker pull ghcr.io/wesense-earth/wesense-ingester-meshtastic:latest
+
+docker run -d \
+  --name wesense-ingester-meshtastic \
+  --restart unless-stopped \
+  -e MESHTASTIC_MODE=public \
+  -e WESENSE_OUTPUT_BROKER=mqtt.wesense.earth \
+  -e WESENSE_OUTPUT_PORT=1883 \
+  -e CLICKHOUSE_HOST=your-clickhouse-host \
+  -e CLICKHOUSE_PORT=8123 \
+  -e CLICKHOUSE_DATABASE=wesense \
+  -v ./cache:/app/cache \
+  -v ./config:/app/config:ro \
+  -v ./logs:/app/logs \
+  ghcr.io/wesense-earth/wesense-ingester-meshtastic:latest
+```
+
+## Local Development
+
+```bash
+# Install core library (from sibling directory)
+pip install -e ../wesense-ingester-core
+
+# Install adapter dependencies
+pip install -r requirements.txt
+
+# Run (public mode)
+python meshtastic_ingester.py
+
+# Run (community mode)
+MESHTASTIC_MODE=community python meshtastic_ingester.py
+```
 
 ## Architecture
 
 ```
-Meshtastic Public MQTT              Meshtastic Ingester
-(mqtt.meshtastic.org)               (this service)
-
-    msh/{region}/...                     │
-         │                               │
-         └──────────────────────────────►│
-                                         │
-                                    ┌────▼────┐
-                                    │ Decode  │
-                                    │ Protobuf│
-                                    └────┬────┘
-                                         │
-                                    ┌────▼────┐
-                                    │  Cache  │
-                                    │Position │
-                                    │ (7 day) │
-                                    └────┬────┘
-                                         │
-                                    ┌────▼────┐
-                                    │Correlate│
-                                    │Pos+Tele │
-                                    └────┬────┘
-                                         │
-                                    ┌────▼────┐
-                                    │Reverse  │
-                                    │Geocode  │
-                                    └────┬────┘
-                                         │
-                                         ▼
-               wesense/decoded/{country}/{subdivision}/{device_id}
-                                         │
-                                         ▼
-                                    ┌──────────┐
-                                    │ Telegraf │ ──► InfluxDB
-                                    └──────────┘
-```
-
-## Output Format
-
-Publishes to: `wesense/decoded/{country}/{subdivision}/{device_id}`
-
-```json
-{
-  "device_id": "meshtastic_e4cc140c",
-  "timestamp": 1732291200,
-  "latitude": -36.848461,
-  "longitude": 174.763336,
-  "country": "New Zealand",
-  "country_code": "nz",
-  "subdivision_code": "auk",
-  "data_source": "MESHTASTIC",
-  "measurements": [
-    {"reading_type": "temperature", "value": 22.5, "unit": "°C"},
-    {"reading_type": "humidity", "value": 65.3, "unit": "%"}
-  ]
-}
-```
-
-## Quick Start
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the ingester
-python data_ingester_part1.py
+Meshtastic MQTT (mqtt.meshtastic.org or community)
+    │
+    ▼  Subscribe to msh/{region}/#
+ServiceEnvelope (protobuf)
+    │
+    ▼  Decrypt (AES-CTR) → MeshPacket → Position / Telemetry / NodeInfo
+    │
+    ▼  Cache position per node, correlate with telemetry
+    │
+    ▼  [wesense-ingester-core pipeline]
+    ├─→ DeduplicationCache (mesh flooding protection)
+    ├─→ ReverseGeocoder (GeoNames → ISO 3166 codes)
+    ├─→ BufferedClickHouseWriter (batched inserts)
+    └─→ WeSensePublisher (MQTT: wesense/decoded/meshtastic-public/{country}/{subdiv}/{device})
 ```
 
 ## Configuration
 
-Regions are configured in `config/mqtt_regions.json`. Key environment variables:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MESHTASTIC_MODE` | `public` | `public` or `community` |
+| `MESHTASTIC_CHANNEL_KEY` | `AQ==` | AES channel key (base64) |
+| `CLICKHOUSE_HOST` | `localhost` | ClickHouse server |
+| `CLICKHOUSE_PORT` | `8123` | ClickHouse HTTP port |
+| `CLICKHOUSE_DATABASE` | `wesense` | Database name |
+| `CLICKHOUSE_BATCH_SIZE` | `100` | Rows before flush |
+| `CLICKHOUSE_FLUSH_INTERVAL` | `10` | Seconds between flushes |
+| `WESENSE_OUTPUT_BROKER` | `localhost` | Output MQTT broker |
+| `WESENSE_OUTPUT_PORT` | `1883` | Output MQTT port |
+| `WESENSE_OUTPUT_USERNAME` | | Output MQTT username |
+| `WESENSE_OUTPUT_PASSWORD` | | Output MQTT password |
+| `DEBUG` | `false` | Enable debug logging |
+| `LOG_LEVEL` | `INFO` | Log level |
 
-| Variable            | Default             | Description                                |
-| ------------------- | ------------------- | ------------------------------------------ |
-| `MQTT_BROKER`       | mqtt.meshtastic.org | Source MQTT broker                         |
-| `LOCAL_MQTT_BROKER` | (required)          | Destination MQTT broker for decoded output |
-| `LOCAL_MQTT_PORT`   | 1883                | Destination MQTT port                      |
-| `INFLUX_URL`        | (optional)          | InfluxDB URL for direct writes             |
-| `DEBUG`             | false               | Enable debug logging                       |
+Region subscriptions are configured in `config/mqtt_regions.json`.
 
-## Files
+## Output
 
-| File                        | Description                     |
-| --------------------------- | ------------------------------- |
-| `data_ingester_part1.py`    | Main ingester script            |
-| `config/mqtt_regions.json`  | Meshtastic region configuration |
-| `utils/geocoding_worker.py` | Background reverse geocoding    |
-| `utils/geocoder.py`         | Geocoding implementation        |
+Publishes decoded readings to MQTT topic `wesense/decoded/{source}/{country}/{subdivision}/{device_id}` and inserts into ClickHouse `wesense.sensor_readings`.
 
-## Related Components
+## Related
 
-- **wesense-mqtt-hub** - Central MQTT broker for the WeSense network
-- **wesense-ingester-wesense** - Handles WeSense WiFi/LoRa sensors (simple decode + geocode)
-- **wesense-ttn-webhook** - Receives TTN webhooks for LoRaWAN sensors
+- [wesense-ingester-core](https://github.com/wesense-earth/wesense-ingester-core) — Shared library
+- [wesense-deploy](https://github.com/wesense-earth/wesense-deploy) — Docker Compose orchestration
+- [wesense-respiro](https://github.com/wesense-earth/wesense-respiro) — Sensor map dashboard
 
 ## License
 
