@@ -84,4 +84,4 @@ migrate_influxdb_data.py
 backfill_positions_oneoff.py
 
 # Cache directory (generated at runtime)
-cache/
+/cache/
