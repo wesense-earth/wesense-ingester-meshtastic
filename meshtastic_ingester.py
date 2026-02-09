@@ -5,10 +5,10 @@ WeSense Ingester - Meshtastic (Unified)
 Monitors Meshtastic MQTT regions, decodes protobuf telemetry, correlates
 position + telemetry, and writes decoded data to ClickHouse + MQTT.
 
-Replaces both wesense-ingester-meshtastic (public) and
-wesense-ingester-meshtastic-community with a single codebase.
+Replaces the previous separate public and community ingesters
+with a single codebase.
 
-Set MESHTASTIC_MODE=public (default) or MESHTASTIC_MODE=community
+Set MESHTASTIC_MODE=community (default) or MESHTASTIC_MODE=downlink
 to control data_source labelling and MQTT source routing.
 """
 
@@ -47,12 +47,15 @@ except ImportError:
     _DECRYPTION_AVAILABLE = False
 
 # ── Configuration ────────────────────────────────────────────────────
-MESHTASTIC_MODE = os.getenv("MESHTASTIC_MODE", "public").lower()
+MESHTASTIC_MODE = os.getenv("MESHTASTIC_MODE", "community").lower()
+# Backwards compatibility: treat "public" as "downlink"
+if MESHTASTIC_MODE == "public":
+    MESHTASTIC_MODE = "downlink"
 INGESTION_NODE_ID = os.getenv("INGESTION_NODE_ID", socket.gethostname())
 MESHTASTIC_CHANNEL_KEY = os.getenv("MESHTASTIC_CHANNEL_KEY", "AQ==")
 
 DATA_SOURCE = (
-    "MESHTASTIC_COMMUNITY" if MESHTASTIC_MODE == "community" else "MESHTASTIC_PUBLIC"
+    "MESHTASTIC_COMMUNITY" if MESHTASTIC_MODE == "community" else "MESHTASTIC_DOWNLINK"
 )
 
 PENDING_TELEMETRY_MAX_AGE = 7 * 24 * 3600  # 7 days
@@ -144,7 +147,7 @@ def get_deployment_type_from_node_name(node_name: str | None) -> str:
 
 class MeshtasticIngester:
     """
-    Unified Meshtastic ingester handling both public and community networks.
+    Unified Meshtastic ingester handling both community and downlink networks.
 
     Uses wesense-ingester-core for shared infrastructure:
       - DeduplicationCache for mesh flooding protection
@@ -191,7 +194,7 @@ class MeshtasticIngester:
         self.publisher.connect()
 
         # Region state
-        if MESHTASTIC_MODE == "community":
+        if MESHTASTIC_MODE != "downlink":
             # Community mode: single local MQTT source (env vars), no regions config needed
             self.regions = {
                 "LOCAL": {
@@ -206,7 +209,7 @@ class MeshtasticIngester:
                 }
             }
         else:
-            # Public mode: multiple regions from config file
+            # Downlink mode: multiple regions from config file
             self.regions = load_regions_config()
         self.stats = {
             region: {
@@ -308,12 +311,12 @@ class MeshtasticIngester:
         """Derive MQTT data source label for topic routing."""
         if MESHTASTIC_MODE == "community":
             return "meshtastic-community"
-        return "meshtastic-community" if region == "LOCAL" else "meshtastic-public"
+        return "meshtastic-community" if region == "LOCAL" else "meshtastic-downlink"
 
     def _should_publish_telemetry(self, region: str) -> bool:
         """Check if this region is configured to publish environment telemetry."""
         config = self.regions[region]
-        return config.get("publish_to_wesense", config.get("publish_to_skytrace", True))
+        return config.get("publish_to_wesense", True)
 
     # ── Core processing pipeline ─────────────────────────────────────
 
