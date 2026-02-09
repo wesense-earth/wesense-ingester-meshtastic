@@ -188,7 +188,7 @@ class MeshtasticIngester:
             port=int(os.getenv("WESENSE_OUTPUT_PORT", os.getenv("MQTT_PORT", "1883"))),
             username=os.getenv("WESENSE_OUTPUT_USERNAME", os.getenv("MQTT_USERNAME")),
             password=os.getenv("WESENSE_OUTPUT_PASSWORD", os.getenv("MQTT_PASSWORD")),
-            client_id="meshtastic_unified_publisher",
+            client_id=f"meshtastic_{MESHTASTIC_MODE}_publisher",
         )
         self.publisher = WeSensePublisher(config=mqtt_config)
         self.publisher.connect()
