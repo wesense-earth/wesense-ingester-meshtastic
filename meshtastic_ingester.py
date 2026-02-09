@@ -515,7 +515,10 @@ class MeshtasticIngester:
             user.ParseFromString(decoded.payload)
 
             name = user.long_name if user.long_name else None
-            hw_model = mesh_pb2.HardwareModel.Name(user.hw_model) if user.hw_model else None
+            try:
+                hw_model = mesh_pb2.HardwareModel.Name(user.hw_model) if user.hw_model else None
+            except ValueError:
+                hw_model = f"UNKNOWN_{user.hw_model}"
 
             if node_id in self.stats[region]["positions"]:
                 pos = self.stats[region]["positions"][node_id]
