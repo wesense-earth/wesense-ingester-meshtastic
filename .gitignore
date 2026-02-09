@@ -73,11 +73,6 @@ logs/
 *.tmp
 .cache/
 
-# Docker configs with credentials
-docker-compose.yml
-docker-compose.remote-host.yml
-config/mqtt_regions.json
-
 # Legacy InfluxDB scripts (deprecated - now using ClickHouse)
 test_influxdb_connection.py
 migrate_influxdb_data.py
