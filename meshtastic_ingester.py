@@ -36,6 +36,10 @@ from wesense_ingester import (
 )
 from wesense_ingester.clickhouse.writer import ClickHouseConfig
 from wesense_ingester.mqtt.publisher import MQTTPublisherConfig, WeSensePublisher
+from wesense_ingester.signing.keys import IngesterKeyManager, KeyConfig
+from wesense_ingester.signing.signer import ReadingSigner
+from wesense_ingester.zenoh.config import ZenohConfig
+from wesense_ingester.zenoh.publisher import ZenohPublisher
 
 # ── AES decryption (adapter-specific) ────────────────────────────────
 try:
@@ -62,12 +66,13 @@ PENDING_TELEMETRY_MAX_AGE = 7 * 24 * 3600  # 7 days
 FUTURE_TIMESTAMP_TOLERANCE = 30  # seconds
 STATS_INTERVAL = int(os.getenv("STATS_INTERVAL", "10"))
 
-# ClickHouse column schema for Meshtastic readings (18 columns)
+# ClickHouse column schema for Meshtastic readings (21 columns)
 CLICKHOUSE_COLUMNS = [
     "timestamp", "device_id", "data_source", "network_source", "ingestion_node_id",
     "reading_type", "value", "unit",
     "latitude", "longitude", "altitude", "geo_country", "geo_subdivision",
     "board_model", "deployment_type", "transport_type", "location_source", "node_name",
+    "signature", "ingester_id", "key_version",
 ]
 
 # ── AES decryption keys ──────────────────────────────────────────────
@@ -192,6 +197,21 @@ class MeshtasticIngester:
         )
         self.publisher = WeSensePublisher(config=mqtt_config)
         self.publisher.connect()
+
+        # Ed25519 signing
+        key_config = KeyConfig.from_env()
+        self.key_manager = IngesterKeyManager(config=key_config)
+        self.key_manager.load_or_generate()
+        self.signer = ReadingSigner(self.key_manager)
+        self.logger.info("Ingester ID: %s (key version %d)", self.key_manager.ingester_id, self.key_manager.key_version)
+
+        # Zenoh publisher (optional, non-blocking)
+        zenoh_config = ZenohConfig.from_env()
+        if zenoh_config.enabled:
+            self.zenoh_publisher = ZenohPublisher(config=zenoh_config, signer=self.signer)
+            self.zenoh_publisher.connect()
+        else:
+            self.zenoh_publisher = None
 
         # Region state
         if MESHTASTIC_MODE != "downlink":
@@ -377,7 +397,7 @@ class MeshtasticIngester:
         mqtt_source = self._get_mqtt_source(region)
 
         # Publish to MQTT
-        self.publisher.publish_reading({
+        mqtt_dict = {
             "timestamp": timestamp,
             "device_id": node_id,
             "name": position.get("name"),
@@ -393,7 +413,24 @@ class MeshtasticIngester:
             "value": value,
             "unit": unit,
             "board_model": position.get("hardware"),
-        })
+        }
+        self.publisher.publish_reading(mqtt_dict)
+
+        if self.zenoh_publisher:
+            self.zenoh_publisher.publish_reading(mqtt_dict)
+
+        # Sign the reading for ClickHouse persistence
+        signing_dict = {
+            "device_id": node_id,
+            "data_source": DATA_SOURCE,
+            "timestamp": timestamp,
+            "reading_type": reading_type,
+            "value": value,
+            "latitude": position["lat"],
+            "longitude": position["lon"],
+            "transport_type": "LORA",
+        }
+        signed = self.signer.sign(json.dumps(signing_dict, sort_keys=True).encode())
 
         # Write to ClickHouse
         if self.ch_writer:
@@ -416,6 +453,9 @@ class MeshtasticIngester:
                 "LORA",
                 "gps",
                 position.get("name"),
+                signed.signature.hex(),
+                self.key_manager.ingester_id,
+                self.key_manager.key_version,
             )
             self.ch_writer.add(row)
 
@@ -739,6 +779,9 @@ class MeshtasticIngester:
         if self.ch_writer:
             print("  Flushing ClickHouse buffer...")
             self.ch_writer.close()
+
+        if hasattr(self, 'zenoh_publisher') and self.zenoh_publisher:
+            self.zenoh_publisher.close()
 
         for client in self._source_clients:
             client.loop_stop()
