@@ -40,6 +40,7 @@ from wesense_ingester.signing.keys import IngesterKeyManager, KeyConfig
 from wesense_ingester.signing.signer import ReadingSigner
 from wesense_ingester.zenoh.config import ZenohConfig
 from wesense_ingester.zenoh.publisher import ZenohPublisher
+from wesense_ingester.zenoh.queryable import ZenohQueryable
 
 # ── AES decryption (adapter-specific) ────────────────────────────────
 try:
@@ -205,13 +206,20 @@ class MeshtasticIngester:
         self.signer = ReadingSigner(self.key_manager)
         self.logger.info("Ingester ID: %s (key version %d)", self.key_manager.ingester_id, self.key_manager.key_version)
 
-        # Zenoh publisher (optional, non-blocking)
+        # Zenoh publisher + queryable (optional, non-blocking)
         zenoh_config = ZenohConfig.from_env()
         if zenoh_config.enabled:
             self.zenoh_publisher = ZenohPublisher(config=zenoh_config, signer=self.signer)
             self.zenoh_publisher.connect()
+            self.zenoh_queryable = ZenohQueryable(
+                config=zenoh_config,
+                clickhouse_config=ClickHouseConfig.from_env(),
+            )
+            self.zenoh_queryable.connect()
+            self.zenoh_queryable.register("wesense/v2/live/**")
         else:
             self.zenoh_publisher = None
+            self.zenoh_queryable = None
 
         # Region state
         if MESHTASTIC_MODE != "downlink":
@@ -780,6 +788,8 @@ class MeshtasticIngester:
             print("  Flushing ClickHouse buffer...")
             self.ch_writer.close()
 
+        if hasattr(self, 'zenoh_queryable') and self.zenoh_queryable:
+            self.zenoh_queryable.close()
         if hasattr(self, 'zenoh_publisher') and self.zenoh_publisher:
             self.zenoh_publisher.close()
 
