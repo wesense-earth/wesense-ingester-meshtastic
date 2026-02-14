@@ -41,6 +41,9 @@ from wesense_ingester.signing.signer import ReadingSigner
 from wesense_ingester.zenoh.config import ZenohConfig
 from wesense_ingester.zenoh.publisher import ZenohPublisher
 from wesense_ingester.zenoh.queryable import ZenohQueryable
+from wesense_ingester.registry.config import RegistryConfig
+from wesense_ingester.registry.client import RegistryClient
+from wesense_ingester.signing.trust import TrustStore
 
 # ── AES decryption (adapter-specific) ────────────────────────────────
 try:
@@ -205,6 +208,25 @@ class MeshtasticIngester:
         self.key_manager.load_or_generate()
         self.signer = ReadingSigner(self.key_manager)
         self.logger.info("Ingester ID: %s (key version %d)", self.key_manager.ingester_id, self.key_manager.key_version)
+
+        # OrbitDB registry (optional — automated trust sync)
+        registry_config = RegistryConfig.from_env()
+        if registry_config.enabled:
+            self.trust_store = TrustStore()
+            self.registry_client = RegistryClient(
+                config=registry_config,
+                trust_store=self.trust_store,
+            )
+            self.registry_client.register_node(
+                ingester_id=self.key_manager.ingester_id,
+                public_key_bytes=self.key_manager.public_key_bytes,
+                key_version=self.key_manager.key_version,
+            )
+            self.registry_client.start_trust_sync()
+            self.logger.info("OrbitDB registry enabled — trust sync active")
+        else:
+            self.trust_store = None
+            self.registry_client = None
 
         # Zenoh publisher + queryable (optional, non-blocking)
         zenoh_config = ZenohConfig.from_env()
@@ -792,6 +814,8 @@ class MeshtasticIngester:
             self.zenoh_queryable.close()
         if hasattr(self, 'zenoh_publisher') and self.zenoh_publisher:
             self.zenoh_publisher.close()
+        if hasattr(self, 'registry_client') and self.registry_client:
+            self.registry_client.close()
 
         for client in self._source_clients:
             client.loop_stop()
