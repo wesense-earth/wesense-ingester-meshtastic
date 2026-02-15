@@ -451,7 +451,24 @@ class MeshtasticIngester:
         self.publisher.publish_reading(mqtt_dict)
 
         if self.zenoh_publisher:
-            self.zenoh_publisher.publish_reading(mqtt_dict)
+            self.zenoh_publisher.publish_reading({
+                "device_id": node_id,
+                "data_source": mqtt_source,
+                "network_source": region,
+                "geo_country": country_code,
+                "geo_subdivision": subdivision_code,
+                "timestamp": timestamp,
+                "latitude": position["lat"],
+                "longitude": position["lon"],
+                "altitude": position.get("alt"),
+                "transport_type": "LORA",
+                "reading_type": reading_type,
+                "value": value,
+                "unit": unit,
+                "board_model": position.get("hardware") or "",
+                "deployment_type": get_deployment_type_from_node_name(position.get("name")),
+                "node_name": position.get("name"),
+            })
 
         # Sign the reading for ClickHouse persistence
         signing_dict = {
