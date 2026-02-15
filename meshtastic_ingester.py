@@ -458,7 +458,7 @@ class MeshtasticIngester:
         if self.zenoh_publisher:
             self.zenoh_publisher.publish_reading({
                 "device_id": node_id,
-                "data_source": mqtt_source,
+                "data_source": DATA_SOURCE,
                 "network_source": region,
                 "geo_country": country_code,
                 "geo_subdivision": subdivision_code,
