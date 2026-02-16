@@ -69,6 +69,7 @@ DATA_SOURCE = (
 PENDING_TELEMETRY_MAX_AGE = 7 * 24 * 3600  # 7 days
 FUTURE_TIMESTAMP_TOLERANCE = 30  # seconds
 STATS_INTERVAL = int(os.getenv("STATS_INTERVAL", "10"))
+CLASSIFICATION_CACHE_INTERVAL = int(os.getenv("CLASSIFICATION_CACHE_INTERVAL", "900"))  # 15 min
 
 # ClickHouse column schema for Meshtastic readings (21 columns)
 CLICKHOUSE_COLUMNS = [
@@ -190,6 +191,12 @@ class MeshtasticIngester:
             print(f"Failed to connect to ClickHouse: {e}")
             print("  Continuing without ClickHouse (MQTT only)")
             self.ch_writer = None
+
+        # Classification cache — enriches Zenoh publishes with classifier results
+        self._classification_lock = threading.Lock()
+        self._classification_cache: dict[str, str] = self._load_classification_cache()
+        self._classification_stop = threading.Event()
+        self._classification_thread: threading.Thread | None = None
 
         # MQTT publisher for decoded output (supports old WESENSE_OUTPUT_* env vars)
         mqtt_config = MQTTPublisherConfig(
@@ -367,6 +374,95 @@ class MeshtasticIngester:
         except Exception:
             pass
 
+    # ── Classification cache (enriches Zenoh P2P publishes) ──────────
+
+    def _load_classification_cache(self) -> dict[str, str]:
+        """Load device_id → deployment_type cache from disk."""
+        cache_file = "cache/classification_cache.json"
+        try:
+            if not os.path.exists(cache_file):
+                return {}
+            with open(cache_file) as f:
+                data = json.load(f)
+            classifications = data.get("classifications", {})
+            saved_at = data.get("saved_at", 0)
+            age = int(time.time()) - saved_at
+            print(f"  Loaded classification cache (age: {age}s, {len(classifications)} devices)")
+            return classifications
+        except Exception as e:
+            print(f"  Warning: Failed to load classification cache: {e}")
+            return {}
+
+    def _save_classification_cache(self) -> None:
+        """Save classification cache to disk."""
+        try:
+            os.makedirs("cache", exist_ok=True)
+            data = {"classifications": self._classification_cache, "saved_at": int(time.time())}
+            with open("cache/classification_cache.json", "w") as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+
+    def _refresh_classification_cache(self) -> None:
+        """Query ClickHouse for latest known deployment_type per device_id."""
+        if not self.ch_writer:
+            return
+        try:
+            import clickhouse_connect
+            config = ClickHouseConfig.from_env()
+            client = clickhouse_connect.get_client(
+                host=config.host,
+                port=config.port,
+                username=config.user,
+                password=config.password,
+                database=config.database,
+            )
+            result = client.query(
+                "SELECT device_id, argMax(deployment_type, timestamp) AS dt "
+                f"FROM {config.table} "
+                "WHERE deployment_type != '' "
+                "GROUP BY device_id "
+                "HAVING dt NOT IN ('unknown', 'DEPLOYMENT_UNKNOWN', '')"
+            )
+            new_cache = {}
+            for row in result.result_rows:
+                new_cache[row[0]] = row[1]
+            client.close()
+
+            with self._classification_lock:
+                self._classification_cache = new_cache
+            self._save_classification_cache()
+            self.logger.info(
+                "Classification cache refreshed: %d devices", len(new_cache)
+            )
+        except Exception as e:
+            self.logger.warning("Classification cache refresh failed: %s", e)
+
+    def _start_classification_refresh(self) -> None:
+        """Start background thread that periodically refreshes the classification cache."""
+        if not self.ch_writer:
+            return
+
+        def _refresh_loop():
+            # Initial delay — let ClickHouse settle
+            self._classification_stop.wait(timeout=30)
+            while not self._classification_stop.is_set():
+                self._refresh_classification_cache()
+                self._classification_stop.wait(timeout=CLASSIFICATION_CACHE_INTERVAL)
+
+        self._classification_thread = threading.Thread(
+            target=_refresh_loop, daemon=True, name="classification-cache"
+        )
+        self._classification_thread.start()
+        self.logger.info(
+            "Classification cache refresh started (interval=%ds)", CLASSIFICATION_CACHE_INTERVAL
+        )
+
+    def _get_cached_deployment_type(self, device_id: str) -> str:
+        """Look up cached deployment_type for a device. Returns '' if not cached."""
+        with self._classification_lock:
+            return self._classification_cache.get(device_id, "")
+
     # ── Helpers ───────────────────────────────────────────────────────
 
     def _get_mqtt_source(self, region: str) -> str:
@@ -459,6 +555,9 @@ class MeshtasticIngester:
         self.publisher.publish_reading(mqtt_dict)
 
         if self.zenoh_publisher:
+            deployment_type = get_deployment_type_from_node_name(position.get("name"))
+            if not deployment_type:
+                deployment_type = self._get_cached_deployment_type(node_id)
             self.zenoh_publisher.publish_reading({
                 "device_id": node_id,
                 "data_source": DATA_SOURCE,
@@ -475,7 +574,7 @@ class MeshtasticIngester:
                 "value": value,
                 "unit": unit,
                 "board_model": position.get("hardware") or "",
-                "deployment_type": get_deployment_type_from_node_name(position.get("name")),
+                "deployment_type": deployment_type,
                 "node_name": position.get("name"),
                 "location_source": "gps",
             })
@@ -828,6 +927,11 @@ class MeshtasticIngester:
         print("\n" + "=" * 60)
         print("Shutting down gracefully...")
 
+        # Stop classification cache refresh
+        self._classification_stop.set()
+        if self._classification_thread:
+            self._classification_thread.join(timeout=5)
+
         for region in self.regions:
             if self.regions[region].get("enabled", False):
                 positions = self.stats[region]["positions"]
@@ -903,6 +1007,9 @@ class MeshtasticIngester:
                     print(f"[{region}] Broker not available ({e}), retrying in {retry_delay}s")
                     time.sleep(retry_delay)
                     retry_delay = min(retry_delay * 2, 60)
+
+        # Start classification cache refresh (enriches Zenoh P2P publishes)
+        self._start_classification_refresh()
 
         print(f"\nAll decoders running. Press Ctrl+C to stop.")
 
