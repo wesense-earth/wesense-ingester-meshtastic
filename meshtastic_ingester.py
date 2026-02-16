@@ -463,6 +463,7 @@ class MeshtasticIngester:
                 "device_id": node_id,
                 "data_source": DATA_SOURCE,
                 "network_source": region,
+                "ingestion_node_id": INGESTION_NODE_ID,
                 "geo_country": country_code,
                 "geo_subdivision": subdivision_code,
                 "timestamp": timestamp,
@@ -476,6 +477,7 @@ class MeshtasticIngester:
                 "board_model": position.get("hardware") or "",
                 "deployment_type": get_deployment_type_from_node_name(position.get("name")),
                 "node_name": position.get("name"),
+                "location_source": "gps",
             })
 
         # Sign the reading for ClickHouse persistence
