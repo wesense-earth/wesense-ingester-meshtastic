@@ -868,8 +868,6 @@ class MeshtasticIngester:
             print("Decryption disabled - encrypted packets will be skipped")
         print()
 
-        failed = []
-
         for region, config in self.regions.items():
             if not config.get("enabled", False):
                 continue
@@ -887,19 +885,19 @@ class MeshtasticIngester:
             client.on_connect = self.create_connect_callback(region)
             client.on_message = self.create_message_callback(region)
 
-            try:
-                client.connect(config["broker"], config.get("port", 1883), 60)
-                client.loop_start()
-                self._source_clients.append(client)
-                print(f"[{region}] Connected to {config['broker']}")
-            except Exception as e:
-                print(f"[{region}] Failed to connect: {e}")
-                failed.append({"region": region, "error": str(e)})
-
-        if failed:
-            print(f"\nFailed connections: {len(failed)}")
-            for f in failed:
-                print(f"  {f['region']}: {f['error']}")
+            retry_delay = 5
+            connected = False
+            while not connected:
+                try:
+                    client.connect(config["broker"], config.get("port", 1883), 60)
+                    client.loop_start()
+                    self._source_clients.append(client)
+                    print(f"[{region}] Connected to {config['broker']}")
+                    connected = True
+                except (ConnectionRefusedError, OSError) as e:
+                    print(f"[{region}] Broker not available ({e}), retrying in {retry_delay}s")
+                    time.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 2, 60)
 
         print(f"\nAll decoders running. Press Ctrl+C to stop.")
 
