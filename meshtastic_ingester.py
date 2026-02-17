@@ -977,6 +977,9 @@ class MeshtasticIngester:
             print("Decryption disabled - encrypted packets will be skipped")
         print()
 
+        # Start classification cache refresh (enriches Zenoh P2P publishes)
+        self._start_classification_refresh()
+
         for region, config in self.regions.items():
             if not config.get("enabled", False):
                 continue
@@ -1007,9 +1010,6 @@ class MeshtasticIngester:
                     print(f"[{region}] Broker not available ({e}), retrying in {retry_delay}s")
                     time.sleep(retry_delay)
                     retry_delay = min(retry_delay * 2, 60)
-
-        # Start classification cache refresh (enriches Zenoh P2P publishes)
-        self._start_classification_refresh()
 
         print(f"\nAll decoders running. Press Ctrl+C to stop.")
 
