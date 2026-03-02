@@ -594,6 +594,8 @@ class MeshtasticIngester:
                 "latitude": float(position["lat"]),
                 "longitude": float(position["lon"]),
                 "altitude": float(position["alt"]) if position.get("alt") else None,
+                "geo_country": country_code,
+                "geo_subdivision": subdivision_code,
                 "board_model": position.get("hardware") or "",
                 "deployment_type": get_deployment_type_from_node_name(position.get("name")),
                 "transport_type": "LORA",
