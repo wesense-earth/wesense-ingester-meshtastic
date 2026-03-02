@@ -153,7 +153,7 @@ class MeshtasticIngester:
 
     Uses wesense-ingester-core for shared infrastructure:
       - DeduplicationCache for mesh flooding protection
-      - BufferedClickHouseWriter for batched database writes
+      - GatewayClient for batched writes to the storage gateway
       - WeSensePublisher for MQTT output
       - ReverseGeocoder for coordinate-to-location lookup
       - setup_logging for colored console + rotating file logs
