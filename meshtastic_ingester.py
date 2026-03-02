@@ -29,7 +29,6 @@ import paho.mqtt.client as mqtt
 from meshtastic import mesh_pb2, mqtt_pb2, portnums_pb2, telemetry_pb2
 
 from wesense_ingester import (
-    BufferedClickHouseWriter,
     DeduplicationCache,
     ReverseGeocoder,
     setup_logging,
@@ -72,15 +71,6 @@ PENDING_TELEMETRY_MAX_AGE = 7 * 24 * 3600  # 7 days
 FUTURE_TIMESTAMP_TOLERANCE = 30  # seconds
 STATS_INTERVAL = int(os.getenv("STATS_INTERVAL", "10"))
 CLASSIFICATION_CACHE_INTERVAL = int(os.getenv("CLASSIFICATION_CACHE_INTERVAL", "900"))  # 15 min
-
-# ClickHouse column schema for Meshtastic readings (21 columns)
-CLICKHOUSE_COLUMNS = [
-    "timestamp", "device_id", "data_source", "network_source", "ingestion_node_id",
-    "reading_type", "value", "unit",
-    "latitude", "longitude", "altitude", "geo_country", "geo_subdivision",
-    "board_model", "deployment_type", "transport_type", "location_source", "node_name",
-    "signature", "ingester_id", "key_version",
-]
 
 # ── AES decryption keys ──────────────────────────────────────────────
 DEFAULT_KEYS = {
@@ -181,29 +171,13 @@ class MeshtasticIngester:
         self.dedup = DeduplicationCache()
         self.geocoder = ReverseGeocoder()
 
-        # Storage backend: gateway (preferred) or direct ClickHouse
+        # Storage gateway
         self.gateway_client = None
-        self.ch_writer = None
-        gateway_url = os.getenv("GATEWAY_URL")
-        if gateway_url:
-            try:
-                self.gateway_client = GatewayClient(config=GatewayConfig.from_env())
-                print(f"Using storage gateway at {gateway_url}")
-            except Exception as e:
-                print(f"Failed to create gateway client: {e}")
-                print("  Continuing without storage (MQTT only)")
-        else:
-            try:
-                self.ch_writer = BufferedClickHouseWriter(
-                    config=ClickHouseConfig.from_env(),
-                    columns=CLICKHOUSE_COLUMNS,
-                )
-                print(f"Connected to ClickHouse at {os.getenv('CLICKHOUSE_HOST', 'localhost')}:"
-                      f"{os.getenv('CLICKHOUSE_PORT', '8123')}")
-            except Exception as e:
-                print(f"Failed to connect to ClickHouse: {e}")
-                print("  Continuing without ClickHouse (MQTT only)")
-                self.ch_writer = None
+        try:
+            self.gateway_client = GatewayClient(config=GatewayConfig.from_env())
+        except Exception as e:
+            print(f"Failed to create gateway client: {e}")
+            print("  Continuing without storage (MQTT only)")
 
         # Classification cache — enriches Zenoh publishes with classifier results
         self._classification_lock = threading.Lock()
@@ -418,8 +392,6 @@ class MeshtasticIngester:
 
     def _refresh_classification_cache(self) -> None:
         """Query ClickHouse for latest known deployment_type per device_id."""
-        if not self.ch_writer:
-            return
         try:
             import clickhouse_connect
             config = ClickHouseConfig.from_env()
@@ -453,7 +425,10 @@ class MeshtasticIngester:
 
     def _start_classification_refresh(self) -> None:
         """Start background thread that periodically refreshes the classification cache."""
-        if not self.ch_writer:
+        try:
+            import clickhouse_connect  # noqa: F401
+        except ImportError:
+            self.logger.info("clickhouse-connect not available, classification cache disabled")
             return
 
         def _refresh_loop():
@@ -488,43 +463,6 @@ class MeshtasticIngester:
         """Check if this region is configured to publish environment telemetry."""
         config = self.regions[region]
         return config.get("publish_to_wesense", True)
-
-    # ── Storage helpers (gateway or ClickHouse) ─────────────────────
-
-    def _write_reading(self, reading_dict: dict) -> None:
-        """Route a reading dict to gateway or ClickHouse."""
-        if self.gateway_client:
-            self.gateway_client.add(reading_dict)
-        elif self.ch_writer:
-            row = self._reading_dict_to_row(reading_dict)
-            self.ch_writer.add(row)
-
-    @staticmethod
-    def _reading_dict_to_row(d: dict) -> tuple:
-        """Convert a ReadingIn-compatible dict to a 21-column Meshtastic CH row tuple."""
-        return (
-            datetime.fromtimestamp(d["timestamp"], tz=timezone.utc),
-            d["device_id"],
-            d.get("data_source", ""),
-            d.get("network_source", ""),
-            d.get("ingestion_node_id", ""),
-            d["reading_type"],
-            float(d["value"]),
-            d.get("unit", ""),
-            float(d["latitude"]),
-            float(d["longitude"]),
-            float(d["altitude"]) if d.get("altitude") else None,
-            d.get("geo_country", ""),
-            d.get("geo_subdivision", ""),
-            d.get("board_model", ""),
-            d.get("deployment_type", ""),
-            d.get("transport_type", ""),
-            d.get("location_source", ""),
-            d.get("node_name"),
-            d.get("signature", ""),
-            d.get("ingester_id", ""),
-            d.get("key_version", 0),
-        )
 
     # ── Core processing pipeline ─────────────────────────────────────
 
@@ -642,38 +580,32 @@ class MeshtasticIngester:
         }
         signed = self.signer.sign(json.dumps(signing_dict, sort_keys=True).encode())
 
-        # Write to storage (gateway or ClickHouse)
-        reading_dict = {
-            "timestamp": timestamp,
-            "device_id": node_id,
-            "data_source": DATA_SOURCE,
-            "network_source": region,
-            "ingestion_node_id": INGESTION_NODE_ID,
-            "reading_type": reading_type,
-            "value": float(value),
-            "unit": unit or "",
-            "latitude": float(position["lat"]),
-            "longitude": float(position["lon"]),
-            "altitude": float(position["alt"]) if position.get("alt") else None,
-            "board_model": position.get("hardware") or "",
-            "deployment_type": get_deployment_type_from_node_name(position.get("name")),
-            "transport_type": "LORA",
-            "node_name": position.get("name"),
-            "signature": signed.signature.hex(),
-            "ingester_id": self.key_manager.ingester_id,
-            "key_version": self.key_manager.key_version,
-        }
-        # CH-only fields (gateway doesn't have location_source; geo comes from gateway geocoding)
-        if self.ch_writer:
-            reading_dict["location_source"] = "gps"
-            reading_dict["geo_country"] = country_code
-            reading_dict["geo_subdivision"] = subdivision_code
-        self._write_reading(reading_dict)
+        # Write to storage gateway
+        if self.gateway_client:
+            self.gateway_client.add({
+                "timestamp": timestamp,
+                "device_id": node_id,
+                "data_source": DATA_SOURCE,
+                "network_source": region,
+                "ingestion_node_id": INGESTION_NODE_ID,
+                "reading_type": reading_type,
+                "value": float(value),
+                "unit": unit or "",
+                "latitude": float(position["lat"]),
+                "longitude": float(position["lon"]),
+                "altitude": float(position["alt"]) if position.get("alt") else None,
+                "board_model": position.get("hardware") or "",
+                "deployment_type": get_deployment_type_from_node_name(position.get("name")),
+                "transport_type": "LORA",
+                "node_name": position.get("name"),
+                "signature": signed.signature.hex(),
+                "ingester_id": self.key_manager.ingester_id,
+                "key_version": self.key_manager.key_version,
+            })
 
-        if self.ch_writer or self.gateway_client:
             status = "CACHE_UPDATED" if cache_updated else "CACHE_NOT_UPDATED"
             self.logger.info(
-                "STORAGE_BUFFERED_%s | region=%s | node=%s | type=%s | value=%s | "
+                "GATEWAY_BUFFERED_%s | region=%s | node=%s | type=%s | value=%s | "
                 "lat=%s | lon=%s",
                 status, region, node_id, reading_type, value,
                 position["lat"], position["lon"],
@@ -960,12 +892,11 @@ class MeshtasticIngester:
         print(f"TOTAL Unique nodes with env data + position in last hour: {total_nodes_last_hour}")
 
         dedup_stats = self.dedup.get_stats()
-        if self.gateway_client:
-            storage_stats = self.gateway_client.get_stats()
-        elif self.ch_writer:
-            storage_stats = self.ch_writer.get_stats()
-        else:
-            storage_stats = {"total_written": 0}
+        storage_stats = (
+            self.gateway_client.get_stats()
+            if self.gateway_client
+            else {"total_written": 0}
+        )
         total = dedup_stats["duplicates_blocked"] + dedup_stats["unique_processed"]
         block_rate = (
             dedup_stats["duplicates_blocked"] / total * 100 if total > 0 else 0
@@ -1001,9 +932,6 @@ class MeshtasticIngester:
         if self.gateway_client:
             print("  Flushing gateway buffer...")
             self.gateway_client.close()
-        if self.ch_writer:
-            print("  Flushing ClickHouse buffer...")
-            self.ch_writer.close()
 
         if hasattr(self, 'zenoh_queryable') and self.zenoh_queryable:
             self.zenoh_queryable.close()
