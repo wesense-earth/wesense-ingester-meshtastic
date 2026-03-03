@@ -25,10 +25,12 @@ RUN apt-get update && \
 
 # Copy application code
 COPY wesense-ingester-meshtastic/meshtastic_ingester.py .
+COPY wesense-ingester-meshtastic/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Create directories for cache, logs, and config
 RUN mkdir -p /app/cache /app/logs /app/config
 
 ENV TZ=UTC
 
-CMD ["python", "-u", "meshtastic_ingester.py"]
+ENTRYPOINT ["/app/entrypoint.sh"]
