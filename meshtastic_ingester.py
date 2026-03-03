@@ -599,7 +599,7 @@ class MeshtasticIngester:
                 "board_model": position.get("hardware") or "",
                 "deployment_type": get_deployment_type_from_node_name(position.get("name")),
                 "transport_type": "LORA",
-                "node_name": position.get("name"),
+                "node_name": position.get("name") or "",
                 "signature": signed.signature.hex(),
                 "ingester_id": self.key_manager.ingester_id,
                 "key_version": self.key_manager.key_version,
