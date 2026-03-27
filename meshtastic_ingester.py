@@ -885,7 +885,7 @@ class MeshtasticIngester:
         if rc == 0:
             return  # Clean disconnect (we called disconnect())
         logging.getLogger("meshtastic_ingester").warning(
-            "MQTT disconnected (rc=%d), auto-reconnecting...", rc,
+            "MQTT disconnected (rc=%s), auto-reconnecting...", rc,
         )
 
     # ── Stats ────────────────────────────────────────────────────────
@@ -1063,7 +1063,7 @@ class MeshtasticIngester:
             connected = False
             while not connected:
                 try:
-                    client.connect(broker, port, keepalive=60)
+                    client.connect(broker, port, keepalive=300)
                     client.loop_start()
                     self._source_clients.append(client)
                     print(f"[{broker}] Connected ({len(region_names)} regions: {', '.join(region_names[:5])}{'...' if len(region_names) > 5 else ''})")
