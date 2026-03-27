@@ -17,7 +17,7 @@ COPY wesense-ingester-meshtastic/requirements-docker.txt .
 
 # Install gcc, build all pip packages, then remove gcc in one layer
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc && \
+    apt-get install -y --no-install-recommends gcc libc-dev && \
     pip install --no-cache-dir "/tmp/wesense-ingester-core[p2p]" && \
     pip install --no-cache-dir -r requirements-docker.txt && \
     apt-get purge -y --auto-remove gcc && \
