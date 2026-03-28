@@ -1741,9 +1741,9 @@
     "password": "meshboreft",
     "topic": "msh/NL/#",
     "cache_file": "cache/meshtastic_cache_nl_community.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
-    "note": "Netherlands community server - full access"
+    "note": "Netherlands community server - disabled 2026-03-28, broker refusing connections"
   },
   "NL_COMMUNITY_LP": {
     "broker": "mqtt.meshnet.nl",
