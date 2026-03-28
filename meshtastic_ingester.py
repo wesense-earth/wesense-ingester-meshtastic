@@ -1060,18 +1060,21 @@ class MeshtasticIngester:
             client.reconnect_delay_set(min_delay=1, max_delay=120)
 
             retry_delay = 5
-            connected = False
-            while not connected:
+            max_retries = 3
+            for attempt in range(max_retries + 1):
                 try:
                     client.connect(broker, port, keepalive=300)
                     client.loop_start()
                     self._source_clients.append(client)
                     print(f"[{broker}] Connected ({len(region_names)} regions: {', '.join(region_names[:5])}{'...' if len(region_names) > 5 else ''})")
-                    connected = True
+                    break
                 except (ConnectionRefusedError, OSError) as e:
-                    print(f"[{broker}] Broker not available ({e}), retrying in {retry_delay}s")
-                    time.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 2, 60)
+                    if attempt < max_retries:
+                        print(f"[{broker}] Broker not available ({e}), retrying in {retry_delay}s")
+                        time.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 2, 60)
+                    else:
+                        print(f"[{broker}] Broker unreachable after {max_retries} retries, skipping ({', '.join(region_names)})")
 
         print(f"\n{len(self._source_clients)} MQTT connections active. Press Ctrl+C to stop.")
 
