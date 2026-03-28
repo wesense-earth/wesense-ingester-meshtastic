@@ -63,9 +63,8 @@ if MESHTASTIC_MODE == "public":
 INGESTION_NODE_ID = os.getenv("INGESTION_NODE_ID", socket.gethostname())
 MESHTASTIC_CHANNEL_KEY = os.getenv("MESHTASTIC_CHANNEL_KEY", "AQ==")
 
-DATA_SOURCE = (
-    "MESHTASTIC_COMMUNITY" if MESHTASTIC_MODE == "community" else "MESHTASTIC_DOWNLINK"
-)
+DATA_SOURCE = "meshtastic"
+DATA_SOURCE_NAME = "Meshtastic"
 
 PENDING_TELEMETRY_MAX_AGE = 7 * 24 * 3600  # 7 days
 FUTURE_TIMESTAMP_TOLERANCE = 30  # seconds
@@ -455,9 +454,7 @@ class MeshtasticIngester:
 
     def _get_mqtt_source(self, region: str) -> str:
         """Derive MQTT data source label for topic routing."""
-        if MESHTASTIC_MODE == "community":
-            return "meshtastic-community"
-        return "meshtastic-community" if region == "LOCAL" else "meshtastic-downlink"
+        return "meshtastic"
 
     def _should_publish_telemetry(self, region: str) -> bool:
         """Check if this region is configured to publish environment telemetry."""
@@ -533,6 +530,7 @@ class MeshtasticIngester:
             "country": country_code,
             "subdivision": subdivision_code,
             "data_source": mqtt_source,
+            "data_source_name": DATA_SOURCE_NAME,
             "geo_country": country_code,
             "geo_subdivision": subdivision_code,
             "reading_type": reading_type,
@@ -549,7 +547,8 @@ class MeshtasticIngester:
             self.zenoh_publisher.publish_reading({
                 "device_id": node_id,
                 "data_source": DATA_SOURCE,
-                "network_source": region,
+                "data_source_name": DATA_SOURCE_NAME,
+                "network_source": "mqtt",
                 "ingestion_node_id": INGESTION_NODE_ID,
                 "geo_country": country_code,
                 "geo_subdivision": subdivision_code,
@@ -557,7 +556,7 @@ class MeshtasticIngester:
                 "latitude": position["lat"],
                 "longitude": position["lon"],
                 "altitude": position.get("alt"),
-                "transport_type": "LORA",
+                "transport_type": "lora",
                 "reading_type": reading_type,
                 "value": value,
                 "unit": unit,
@@ -576,7 +575,7 @@ class MeshtasticIngester:
             "value": value,
             "latitude": position["lat"],
             "longitude": position["lon"],
-            "transport_type": "LORA",
+            "transport_type": "lora",
         }
         signed = self.signer.sign(json.dumps(signing_dict, sort_keys=True).encode())
 
@@ -586,7 +585,8 @@ class MeshtasticIngester:
                 "timestamp": timestamp,
                 "device_id": node_id,
                 "data_source": DATA_SOURCE,
-                "network_source": region,
+                "data_source_name": DATA_SOURCE_NAME,
+                "network_source": "mqtt",
                 "ingestion_node_id": INGESTION_NODE_ID,
                 "reading_type": reading_type,
                 "value": float(value),
@@ -598,7 +598,7 @@ class MeshtasticIngester:
                 "geo_subdivision": subdivision_code,
                 "board_model": position.get("hardware") or "",
                 "deployment_type": get_deployment_type_from_node_name(position.get("name")),
-                "transport_type": "LORA",
+                "transport_type": "lora",
                 "node_name": position.get("name") or "",
                 "signature": signed.signature.hex(),
                 "ingester_id": self.key_manager.ingester_id,
