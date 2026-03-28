@@ -1032,7 +1032,7 @@ class MeshtasticIngester:
             max_retries = 3
             for attempt in range(max_retries + 1):
                 try:
-                    client.connect(config["broker"], config.get("port", 1883), keepalive=300)
+                    client.connect(config["broker"], config.get("port", 1883), keepalive=60)
                     client.loop_start()
                     self._source_clients.append(client)
                     break
