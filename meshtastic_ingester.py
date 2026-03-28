@@ -794,29 +794,10 @@ class MeshtasticIngester:
 
     # ── MQTT callbacks ───────────────────────────────────────────────
 
-    def _resolve_region_from_topic(self, topic: str, broker_regions: dict[str, str]) -> str | None:
-        """Match an incoming MQTT topic to a region using the broker's topic map.
-
-        broker_regions maps topic_prefix (e.g. "msh/US/") to region name.
-        Longest prefix match wins so "msh/ANZ/NSW/" beats "msh/ANZ/".
-        """
-        for prefix, region in broker_regions.items():
-            if topic.startswith(prefix):
-                return region
-        return None
-
-    def create_broker_message_callback(self, broker_regions: dict[str, str]):
-        """Create MQTT on_message callback shared by all regions on one broker.
-
-        broker_regions: dict mapping topic_prefix -> region name, sorted by
-        longest prefix first so more-specific topics win.
-        """
+    def create_message_callback(self, region: str):
+        """Create MQTT on_message callback for a specific region."""
         def on_message(client, userdata, msg):
             try:
-                region = self._resolve_region_from_topic(msg.topic, broker_regions)
-                if region is None:
-                    return
-
                 self.stats[region]["messages"] += 1
 
                 envelope = mqtt_pb2.ServiceEnvelope()
@@ -862,31 +843,16 @@ class MeshtasticIngester:
 
         return on_message
 
-    def create_broker_connect_callback(self, broker: str, topics: list[tuple[str, str]]):
-        """Create MQTT on_connect callback that subscribes to all topics for a broker.
-
-        topics: list of (region_name, topic_filter) pairs.
-        Called on initial connect AND on automatic reconnect, so subscriptions
-        are re-established after a connection drop.
-        """
+    def create_connect_callback(self, region: str):
+        """Create MQTT on_connect callback for a specific region."""
         def on_connect(client, userdata, flags, rc, properties=None):
             if rc == 0:
-                for region, topic in topics:
-                    print(f"[{region}] Connected, subscribing to {topic}")
-                    client.subscribe(topic)
+                print(f"[{region}] Connected, subscribing to {self.regions[region]['topic']}")
+                client.subscribe(self.regions[region]["topic"])
             else:
-                print(f"[{broker}] Connection failed (code {rc})")
+                print(f"[{region}] Connection failed (code {rc})")
 
         return on_connect
-
-    @staticmethod
-    def _on_disconnect(client, userdata, flags, rc, properties=None):
-        """Log MQTT disconnections. Paho auto-reconnects via loop_start()."""
-        if rc == 0:
-            return  # Clean disconnect (we called disconnect())
-        logging.getLogger("meshtastic_ingester").warning(
-            "MQTT disconnected (rc=%s), auto-reconnecting...", rc,
-        )
 
     # ── Stats ────────────────────────────────────────────────────────
 
@@ -1004,37 +970,31 @@ class MeshtasticIngester:
         # Start classification cache refresh (enriches Zenoh P2P publishes)
         self._start_classification_refresh()
 
-        # Load caches and connect each enabled region as a separate MQTT client.
-        # mqtt.meshtastic.org does not support multiple topic subscriptions on a
-        # single connection (silently drops messages), so we use one client per region.
         for region, config in self.regions.items():
             if not config.get("enabled", False):
                 continue
 
+            # Load caches
             self.stats[region]["positions"] = self._load_cache(config["cache_file"])
             self.pending_telemetry[region] = self._load_pending_telemetry(region)
 
+            # Create MQTT client for this region
             client = mqtt.Client(
                 mqtt.CallbackAPIVersion.VERSION2,
-                client_id=f"wesense_{region.lower()}",
+                client_id=f"meshtastic_{region.lower()}",
             )
             client.username_pw_set(config.get("username", ""), config.get("password", ""))
-            client.on_connect = self.create_broker_connect_callback(
-                config["broker"], [(region, config["topic"])],
-            )
-            client.on_message = self.create_broker_message_callback(
-                {config["topic"].replace("#", "").replace("+", ""): region},
-            )
-            client.on_disconnect = self._on_disconnect
-            client.reconnect_delay_set(min_delay=1, max_delay=120)
+            client.on_connect = self.create_connect_callback(region)
+            client.on_message = self.create_message_callback(region)
 
             retry_delay = 5
             max_retries = 3
             for attempt in range(max_retries + 1):
                 try:
-                    client.connect(config["broker"], config.get("port", 1883), keepalive=60)
+                    client.connect(config["broker"], config.get("port", 1883), 60)
                     client.loop_start()
                     self._source_clients.append(client)
+                    print(f"[{region}] Connected to {config['broker']}")
                     break
                 except (ConnectionRefusedError, OSError) as e:
                     if attempt < max_retries:
@@ -1044,7 +1004,7 @@ class MeshtasticIngester:
                     else:
                         print(f"[{region}] Broker unreachable after {max_retries} retries, skipping")
 
-        print(f"\n{len(self._source_clients)} MQTT connections active. Press Ctrl+C to stop.")
+        print(f"\nAll decoders running. Press Ctrl+C to stop.")
 
         try:
             while True:
