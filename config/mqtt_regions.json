@@ -995,10 +995,10 @@
     "password": "large4cats",
     "topic": "msh/AF/#",
     "cache_file": "cache/meshtastic_cache_af.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "AL": {
     "broker": "mqtt.meshtastic.org",
@@ -1007,10 +1007,10 @@
     "password": "large4cats",
     "topic": "msh/AL/#",
     "cache_file": "cache/meshtastic_cache_al.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "AM": {
     "broker": "mqtt.meshtastic.org",
@@ -1019,10 +1019,10 @@
     "password": "large4cats",
     "topic": "msh/AM/#",
     "cache_file": "cache/meshtastic_cache_am.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "AT": {
     "broker": "mqtt.meshtastic.org",
@@ -1031,10 +1031,10 @@
     "password": "large4cats",
     "topic": "msh/AT/#",
     "cache_file": "cache/meshtastic_cache_at.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "AU": {
     "broker": "mqtt.meshtastic.org",
@@ -1043,10 +1043,10 @@
     "password": "large4cats",
     "topic": "msh/AU/#",
     "cache_file": "cache/meshtastic_cache_au.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "AZ": {
     "broker": "mqtt.meshtastic.org",
@@ -1055,10 +1055,10 @@
     "password": "large4cats",
     "topic": "msh/AZ/#",
     "cache_file": "cache/meshtastic_cache_az.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "BA": {
     "broker": "mqtt.meshtastic.org",
@@ -1067,10 +1067,10 @@
     "password": "large4cats",
     "topic": "msh/BA/#",
     "cache_file": "cache/meshtastic_cache_ba.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "BB": {
     "broker": "mqtt.meshtastic.org",
@@ -1079,10 +1079,10 @@
     "password": "large4cats",
     "topic": "msh/BB/#",
     "cache_file": "cache/meshtastic_cache_bb.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "BD": {
     "broker": "mqtt.meshtastic.org",
@@ -1091,10 +1091,10 @@
     "password": "large4cats",
     "topic": "msh/BD/#",
     "cache_file": "cache/meshtastic_cache_bd.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "BE": {
     "broker": "mqtt.meshtastic.org",
@@ -1103,10 +1103,10 @@
     "password": "large4cats",
     "topic": "msh/BE/#",
     "cache_file": "cache/meshtastic_cache_be.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "BG": {
     "broker": "mqtt.meshtastic.org",
@@ -1115,10 +1115,10 @@
     "password": "large4cats",
     "topic": "msh/BG/#",
     "cache_file": "cache/meshtastic_cache_bg.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "BH": {
     "broker": "mqtt.meshtastic.org",
@@ -1127,10 +1127,10 @@
     "password": "large4cats",
     "topic": "msh/BH/#",
     "cache_file": "cache/meshtastic_cache_bh.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "BN": {
     "broker": "mqtt.meshtastic.org",
@@ -1139,10 +1139,10 @@
     "password": "large4cats",
     "topic": "msh/BN/#",
     "cache_file": "cache/meshtastic_cache_bn.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "BO": {
     "broker": "mqtt.meshtastic.org",
@@ -1151,10 +1151,10 @@
     "password": "large4cats",
     "topic": "msh/BO/#",
     "cache_file": "cache/meshtastic_cache_bo.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "BS": {
     "broker": "mqtt.meshtastic.org",
@@ -1175,10 +1175,10 @@
     "password": "large4cats",
     "topic": "msh/BW/#",
     "cache_file": "cache/meshtastic_cache_bw.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "BZ": {
     "broker": "mqtt.meshtastic.org",
@@ -1187,10 +1187,10 @@
     "password": "large4cats",
     "topic": "msh/BZ/#",
     "cache_file": "cache/meshtastic_cache_bz.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "CI": {
     "broker": "mqtt.meshtastic.org",
@@ -1199,10 +1199,10 @@
     "password": "large4cats",
     "topic": "msh/CI/#",
     "cache_file": "cache/meshtastic_cache_ci.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "CL": {
     "broker": "mqtt.meshtastic.org",
@@ -1223,10 +1223,10 @@
     "password": "large4cats",
     "topic": "msh/CM/#",
     "cache_file": "cache/meshtastic_cache_cm.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
     "status": "untested",
-    "note": "Not yet tested for node activity - may or may not have data"
+    "note": "Not yet tested for node activity - may or may not have data \u2014 disabled 2026-03-28, no active nodes"
   },
   "CO": {
     "broker": "mqtt.meshtastic.org",
@@ -1293,9 +1293,9 @@
     "password": "large4cats",
     "topic": "msh/DE/#",
     "cache_file": "cache/meshtastic_cache_de.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
-    "note": "Confirmed working with default key"
+    "note": "Confirmed working with default key \u2014 disabled 2026-03-28, no active nodes"
   },
   "DK": {
     "broker": "mqtt.meshtastic.org",
