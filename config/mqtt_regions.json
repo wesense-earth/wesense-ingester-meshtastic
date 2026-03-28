@@ -1796,8 +1796,8 @@
     "password": "large4cats",
     "topic": "msh/CA/#",
     "cache_file": "cache/meshtastic_cache_ca_community.json",
-    "enabled": true,
+    "enabled": false,
     "publish_to_skytrace": true,
-    "note": "Canada community server"
+    "note": "Canada community server — disabled 2026-03-28, duplicate of CA region + flooding retained messages"
   }
 }
