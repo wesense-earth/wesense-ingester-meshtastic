@@ -506,6 +506,8 @@ class MeshtasticIngester:
             "value": value,
             "unit": unit,
             "board_model": position.get("hardware"),
+            "node_name": position.get("name") or "",
+            "deployment_type": get_deployment_type_from_node_name(position.get("name")),
         }
         self.publisher.publish_reading(mqtt_dict)
 
