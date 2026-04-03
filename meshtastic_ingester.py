@@ -181,15 +181,14 @@ class MeshtasticIngester:
         self._classification_stop = threading.Event()
         self._classification_thread: threading.Thread | None = None
 
-        # MQTT publisher for decoded output (supports old WESENSE_OUTPUT_* env vars)
-        use_tls = os.getenv("WESENSE_OUTPUT_USE_TLS", os.getenv("MQTT_USE_TLS", "")).lower() in ("true", "1", "yes")
+        # MQTT publisher for decoded output
         mqtt_config = MQTTPublisherConfig(
-            broker=os.getenv("WESENSE_OUTPUT_BROKER", os.getenv("MQTT_BROKER", "localhost")),
-            port=int(os.getenv("WESENSE_OUTPUT_PORT", os.getenv("MQTT_PORT", "8883" if use_tls else "1883"))),
-            username=os.getenv("WESENSE_OUTPUT_USERNAME", os.getenv("MQTT_USERNAME")),
-            password=os.getenv("WESENSE_OUTPUT_PASSWORD", os.getenv("MQTT_PASSWORD")),
+            broker=os.getenv("WESENSE_OUTPUT_BROKER", "localhost"),
+            port=int(os.getenv("WESENSE_OUTPUT_PORT", "1883")),
+            username=os.getenv("WESENSE_OUTPUT_USERNAME"),
+            password=os.getenv("WESENSE_OUTPUT_PASSWORD"),
             client_id=f"meshtastic_{MESHTASTIC_MODE}_publisher",
-            use_tls=use_tls,
+            use_tls=os.getenv("MQTT_USE_TLS", "").lower() in ("true", "1", "yes"),
             ca_certfile=os.getenv("TLS_CA_CERTFILE"),
         )
         self.publisher = WeSensePublisher(config=mqtt_config)
