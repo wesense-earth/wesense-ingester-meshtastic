@@ -36,7 +36,7 @@ from wesense_ingester import (
 from wesense_ingester.clickhouse.writer import ClickHouseConfig
 from wesense_ingester.gateway.client import GatewayClient
 from wesense_ingester.gateway.config import GatewayConfig
-from wesense_ingester.mqtt.publisher import MQTTPublisherConfig, WeSensePublisher
+from wesense_ingester.mqtt.publisher import MQTTPublisherConfig, WeSensePublisher, configure_mqtt_tls
 from wesense_ingester.signing.keys import IngesterKeyManager, KeyConfig
 from wesense_ingester.signing.signer import ReadingSigner
 from wesense_ingester.registry.config import RegistryConfig
@@ -182,12 +182,15 @@ class MeshtasticIngester:
         self._classification_thread: threading.Thread | None = None
 
         # MQTT publisher for decoded output (supports old WESENSE_OUTPUT_* env vars)
+        use_tls = os.getenv("WESENSE_OUTPUT_USE_TLS", os.getenv("MQTT_USE_TLS", "")).lower() in ("true", "1", "yes")
         mqtt_config = MQTTPublisherConfig(
             broker=os.getenv("WESENSE_OUTPUT_BROKER", os.getenv("MQTT_BROKER", "localhost")),
-            port=int(os.getenv("WESENSE_OUTPUT_PORT", os.getenv("MQTT_PORT", "1883"))),
+            port=int(os.getenv("WESENSE_OUTPUT_PORT", os.getenv("MQTT_PORT", "8883" if use_tls else "1883"))),
             username=os.getenv("WESENSE_OUTPUT_USERNAME", os.getenv("MQTT_USERNAME")),
             password=os.getenv("WESENSE_OUTPUT_PASSWORD", os.getenv("MQTT_PASSWORD")),
             client_id=f"meshtastic_{MESHTASTIC_MODE}_publisher",
+            use_tls=use_tls,
+            ca_certfile=os.getenv("TLS_CA_CERTFILE"),
         )
         self.publisher = WeSensePublisher(config=mqtt_config)
         self.publisher.connect()
@@ -925,6 +928,7 @@ class MeshtasticIngester:
                 client_id=f"meshtastic_{region.lower()}",
             )
             client.username_pw_set(config.get("username", ""), config.get("password", ""))
+            configure_mqtt_tls(client)
             client.on_connect = self.create_connect_callback(region)
             client.on_message = self.create_message_callback(region)
 
