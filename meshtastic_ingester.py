@@ -365,13 +365,21 @@ class MeshtasticIngester:
         try:
             import clickhouse_connect
             config = ClickHouseConfig.from_env()
-            client = clickhouse_connect.get_client(
+            ch_kwargs = dict(
                 host=config.host,
                 port=config.port,
                 username=config.user,
                 password=config.password,
                 database=config.database,
             )
+            if config.tls_enabled:
+                ch_kwargs["secure"] = True
+                if config.tls_ca_certfile and os.path.exists(config.tls_ca_certfile):
+                    ch_kwargs["verify"] = True
+                    ch_kwargs["ca_cert"] = config.tls_ca_certfile
+                else:
+                    ch_kwargs["verify"] = False
+            client = clickhouse_connect.get_client(**ch_kwargs)
             result = client.query(
                 "SELECT device_id, argMax(deployment_type, timestamp) AS dt "
                 f"FROM {config.table} "
