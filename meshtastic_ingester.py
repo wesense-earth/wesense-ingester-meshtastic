@@ -12,13 +12,11 @@ Set MESHTASTIC_MODE=community (default) or MESHTASTIC_MODE=downlink
 to control data_source labelling and MQTT source routing.
 """
 
-import atexit
 import base64
 import hashlib
 import json
 import logging
 import os
-import signal
 import socket
 import sys
 import threading
@@ -28,13 +26,10 @@ from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 from meshtastic import mesh_pb2, mqtt_pb2, portnums_pb2, telemetry_pb2
 
-from wesense_ingester import setup_logging
+from wesense_ingester import Shutdown, setup_logging
 from wesense_ingester.clickhouse.writer import ClickHouseConfig
 from wesense_ingester.mqtt.publisher import MQTTPublisherConfig, configure_mqtt_tls
 from wesense_ingester.pipeline import ReadingPipeline
-from wesense_ingester.registry.config import RegistryConfig
-from wesense_ingester.registry.client import RegistryClient
-from wesense_ingester.signing.trust import TrustStore
 
 # ── AES decryption (adapter-specific) ────────────────────────────────
 try:
@@ -171,24 +166,6 @@ class MeshtasticIngester:
             ca_certfile=os.getenv("TLS_CA_CERTFILE"),
         )
         self.pipeline = ReadingPipeline(name="meshtastic", mqtt_config=mqtt_config)
-
-        # OrbitDB registry — node registration + trust sync
-        self.trust_store = TrustStore()
-        registry_config = RegistryConfig.from_env()
-        self.registry_client = RegistryClient(
-            config=registry_config,
-            trust_store=self.trust_store,
-        )
-        try:
-            self.registry_client.register_node(
-                ingester_id=self.pipeline.ingester_id,
-                public_key_bytes=self.pipeline.key_manager.public_key_bytes,
-                key_version=self.pipeline.key_manager.key_version,
-            )
-        except Exception as e:
-            self.logger.warning("OrbitDB registration failed (%s), will retry on next trust sync", e)
-        self.registry_client.start_trust_sync()
-        self.logger.info("OrbitDB registry — trust sync active")
 
         # Region state
         if MESHTASTIC_MODE != "downlink":
@@ -783,8 +760,8 @@ class MeshtasticIngester:
 
     # ── Lifecycle ────────────────────────────────────────────────────
 
-    def shutdown(self, signum=None, frame=None) -> None:
-        """Graceful shutdown: save caches, flush ClickHouse, disconnect."""
+    def _cleanup(self) -> None:
+        """Graceful cleanup: save caches, flush ClickHouse, disconnect MQTT clients."""
         print("\n" + "=" * 60)
         print("Shutting down gracefully...")
 
@@ -802,23 +779,22 @@ class MeshtasticIngester:
                 if region in self.pending_telemetry:
                     self._save_pending_telemetry(region, self.pending_telemetry[region])
 
+        for client in self._source_clients:
+            try:
+                client.loop_stop()
+                client.disconnect()
+            except Exception:
+                pass
+
         print("  Closing pipeline...")
         self.pipeline.close()
 
-        if hasattr(self, 'registry_client'):
-            self.registry_client.close()
-
-        for client in self._source_clients:
-            client.loop_stop()
-            client.disconnect()
         print("Shutdown complete.")
         print("=" * 60)
 
     def run(self) -> None:
         """Main entry point: connect to all regions and run the main loop."""
-        signal.signal(signal.SIGINT, self.shutdown)
-        signal.signal(signal.SIGTERM, self.shutdown)
-        atexit.register(self.shutdown)
+        shutdown = Shutdown(name="meshtastic")
 
         print("=" * 60)
         print(f"Meshtastic Ingester (mode={MESHTASTIC_MODE}, source={DATA_SOURCE})")
@@ -871,13 +847,13 @@ class MeshtasticIngester:
 
         print(f"\nAll decoders running. Press Ctrl+C to stop.")
 
-        try:
-            while True:
-                time.sleep(STATS_INTERVAL)
-                self.print_stats()
-        except KeyboardInterrupt:
-            self.shutdown()
-            sys.exit(0)
+        while not shutdown.requested:
+            shutdown.sleep(STATS_INTERVAL)
+            if shutdown.requested:
+                break
+            self.print_stats()
+
+        self._cleanup()
 
 
 def main():
