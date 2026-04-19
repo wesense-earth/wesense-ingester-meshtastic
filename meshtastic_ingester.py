@@ -12,13 +12,11 @@ Set MESHTASTIC_MODE=community (default) or MESHTASTIC_MODE=downlink
 to control data_source labelling and MQTT source routing.
 """
 
-import atexit
 import base64
 import hashlib
 import json
 import logging
 import os
-import signal
 import socket
 import sys
 import threading
@@ -28,22 +26,10 @@ from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 from meshtastic import mesh_pb2, mqtt_pb2, portnums_pb2, telemetry_pb2
 
-from wesense_ingester import (
-    BufferedClickHouseWriter,
-    DeduplicationCache,
-    ReverseGeocoder,
-    setup_logging,
-)
+from wesense_ingester import Shutdown, setup_logging
 from wesense_ingester.clickhouse.writer import ClickHouseConfig
-from wesense_ingester.mqtt.publisher import MQTTPublisherConfig, WeSensePublisher
-from wesense_ingester.signing.keys import IngesterKeyManager, KeyConfig
-from wesense_ingester.signing.signer import ReadingSigner
-from wesense_ingester.zenoh.config import ZenohConfig
-from wesense_ingester.zenoh.publisher import ZenohPublisher
-from wesense_ingester.zenoh.queryable import ZenohQueryable
-from wesense_ingester.registry.config import RegistryConfig
-from wesense_ingester.registry.client import RegistryClient
-from wesense_ingester.signing.trust import TrustStore
+from wesense_ingester.mqtt.publisher import MQTTPublisherConfig, configure_mqtt_tls
+from wesense_ingester.pipeline import ReadingPipeline
 
 # ── AES decryption (adapter-specific) ────────────────────────────────
 try:
@@ -62,23 +48,13 @@ if MESHTASTIC_MODE == "public":
 INGESTION_NODE_ID = os.getenv("INGESTION_NODE_ID", socket.gethostname())
 MESHTASTIC_CHANNEL_KEY = os.getenv("MESHTASTIC_CHANNEL_KEY", "AQ==")
 
-DATA_SOURCE = (
-    "MESHTASTIC_COMMUNITY" if MESHTASTIC_MODE == "community" else "MESHTASTIC_DOWNLINK"
-)
+DATA_SOURCE = "meshtastic"
+DATA_SOURCE_NAME = "Meshtastic"
 
 PENDING_TELEMETRY_MAX_AGE = 7 * 24 * 3600  # 7 days
 FUTURE_TIMESTAMP_TOLERANCE = 30  # seconds
 STATS_INTERVAL = int(os.getenv("STATS_INTERVAL", "10"))
 CLASSIFICATION_CACHE_INTERVAL = int(os.getenv("CLASSIFICATION_CACHE_INTERVAL", "900"))  # 15 min
-
-# ClickHouse column schema for Meshtastic readings (21 columns)
-CLICKHOUSE_COLUMNS = [
-    "timestamp", "device_id", "data_source", "network_source", "ingestion_node_id",
-    "reading_type", "value", "unit",
-    "latitude", "longitude", "altitude", "geo_country", "geo_subdivision",
-    "board_model", "deployment_type", "transport_type", "location_source", "node_name",
-    "signature", "ingester_id", "key_version",
-]
 
 # ── AES decryption keys ──────────────────────────────────────────────
 DEFAULT_KEYS = {
@@ -159,12 +135,10 @@ class MeshtasticIngester:
     """
     Unified Meshtastic ingester handling both community and downlink networks.
 
-    Uses wesense-ingester-core for shared infrastructure:
-      - DeduplicationCache for mesh flooding protection
-      - BufferedClickHouseWriter for batched database writes
-      - WeSensePublisher for MQTT output
-      - ReverseGeocoder for coordinate-to-location lookup
-      - setup_logging for colored console + rotating file logs
+    Uses wesense-ingester-core ReadingPipeline for shared infrastructure
+    (dedup, geocoding, signing, MQTT publish, gateway POST). This adapter
+    only handles Meshtastic-specific logic: protobuf decoding, AES
+    decryption, and position-telemetry correlation.
     """
 
     def __init__(self):
@@ -175,92 +149,23 @@ class MeshtasticIngester:
         )
         self.ft_logger = logging.getLogger("meshtastic_ingester.future_timestamps")
 
-        # Core components
-        self.dedup = DeduplicationCache()
-        self.geocoder = ReverseGeocoder()
-
-        # ClickHouse writer
-        try:
-            self.ch_writer = BufferedClickHouseWriter(
-                config=ClickHouseConfig.from_env(),
-                columns=CLICKHOUSE_COLUMNS,
-            )
-            print(f"Connected to ClickHouse at {os.getenv('CLICKHOUSE_HOST', 'localhost')}:"
-                  f"{os.getenv('CLICKHOUSE_PORT', '8123')}")
-        except Exception as e:
-            print(f"Failed to connect to ClickHouse: {e}")
-            print("  Continuing without ClickHouse (MQTT only)")
-            self.ch_writer = None
-
         # Classification cache — enriches Zenoh publishes with classifier results
         self._classification_lock = threading.Lock()
         self._classification_cache: dict[str, str] = self._load_classification_cache()
         self._classification_stop = threading.Event()
         self._classification_thread: threading.Thread | None = None
 
-        # MQTT publisher for decoded output (supports old WESENSE_OUTPUT_* env vars)
+        # Unified pipeline: dedup -> geocode -> sign -> MQTT publish -> gateway POST
         mqtt_config = MQTTPublisherConfig(
-            broker=os.getenv("WESENSE_OUTPUT_BROKER", os.getenv("MQTT_BROKER", "localhost")),
-            port=int(os.getenv("WESENSE_OUTPUT_PORT", os.getenv("MQTT_PORT", "1883"))),
-            username=os.getenv("WESENSE_OUTPUT_USERNAME", os.getenv("MQTT_USERNAME")),
-            password=os.getenv("WESENSE_OUTPUT_PASSWORD", os.getenv("MQTT_PASSWORD")),
+            broker=os.getenv("WESENSE_OUTPUT_BROKER", "localhost"),
+            port=int(os.getenv("WESENSE_OUTPUT_PORT", "1883")),
+            username=os.getenv("WESENSE_OUTPUT_USERNAME"),
+            password=os.getenv("WESENSE_OUTPUT_PASSWORD"),
             client_id=f"meshtastic_{MESHTASTIC_MODE}_publisher",
+            use_tls=os.getenv("MQTT_USE_TLS", "").lower() in ("true", "1", "yes"),
+            ca_certfile=os.getenv("TLS_CA_CERTFILE"),
         )
-        self.publisher = WeSensePublisher(config=mqtt_config)
-        self.publisher.connect()
-
-        # Ed25519 signing
-        key_config = KeyConfig.from_env()
-        self.key_manager = IngesterKeyManager(config=key_config)
-        self.key_manager.load_or_generate()
-        self.signer = ReadingSigner(self.key_manager)
-        self.logger.info("Ingester ID: %s (key version %d)", self.key_manager.ingester_id, self.key_manager.key_version)
-
-        # OrbitDB registry — node registration + trust sync
-        self.trust_store = TrustStore()
-        registry_config = RegistryConfig.from_env()
-        self.registry_client = RegistryClient(
-            config=registry_config,
-            trust_store=self.trust_store,
-        )
-        # Build zenoh_endpoint for node registry (WAN + LAN discovery)
-        reg_metadata = {}
-        announce_addr = os.getenv("ANNOUNCE_ADDRESS", "")
-        zenoh_announce = os.getenv("ZENOH_ANNOUNCE_ADDRESS", "")
-        zenoh_port = os.getenv("PORT_ZENOH", "7447")
-        if announce_addr:
-            reg_metadata["zenoh_endpoint"] = f"tcp/{announce_addr}:{zenoh_port}"
-        # LAN endpoint for same-network peers (avoids NAT hairpin).
-        # ZENOH_ANNOUNCE_ADDRESS is the host's LAN IP, passed from docker-compose.
-        if zenoh_announce and zenoh_announce != announce_addr:
-            reg_metadata["zenoh_endpoint_lan"] = f"tcp/{zenoh_announce}:{zenoh_port}"
-
-        try:
-            self.registry_client.register_node(
-                ingester_id=self.key_manager.ingester_id,
-                public_key_bytes=self.key_manager.public_key_bytes,
-                key_version=self.key_manager.key_version,
-                **reg_metadata,
-            )
-        except Exception as e:
-            self.logger.warning("OrbitDB registration failed (%s), will retry on next trust sync", e)
-        self.registry_client.start_trust_sync()
-        self.logger.info("OrbitDB registry — trust sync active")
-
-        # Zenoh publisher + queryable (optional, non-blocking)
-        zenoh_config = ZenohConfig.from_env()
-        if zenoh_config.enabled:
-            self.zenoh_publisher = ZenohPublisher(config=zenoh_config, signer=self.signer)
-            self.zenoh_publisher.connect()
-            self.zenoh_queryable = ZenohQueryable(
-                config=zenoh_config,
-                clickhouse_config=ClickHouseConfig.from_env(),
-            )
-            self.zenoh_queryable.connect()
-            self.zenoh_queryable.register("wesense/v2/live/**")
-        else:
-            self.zenoh_publisher = None
-            self.zenoh_queryable = None
+        self.pipeline = ReadingPipeline(name="meshtastic", mqtt_config=mqtt_config)
 
         # Region state
         if MESHTASTIC_MODE != "downlink":
@@ -405,18 +310,24 @@ class MeshtasticIngester:
 
     def _refresh_classification_cache(self) -> None:
         """Query ClickHouse for latest known deployment_type per device_id."""
-        if not self.ch_writer:
-            return
         try:
             import clickhouse_connect
             config = ClickHouseConfig.from_env()
-            client = clickhouse_connect.get_client(
+            ch_kwargs = dict(
                 host=config.host,
                 port=config.port,
                 username=config.user,
                 password=config.password,
                 database=config.database,
             )
+            if config.tls_enabled:
+                ch_kwargs["secure"] = True
+                if config.tls_ca_certfile and os.path.exists(config.tls_ca_certfile):
+                    ch_kwargs["verify"] = True
+                    ch_kwargs["ca_cert"] = config.tls_ca_certfile
+                else:
+                    ch_kwargs["verify"] = False
+            client = clickhouse_connect.get_client(**ch_kwargs)
             result = client.query(
                 "SELECT device_id, argMax(deployment_type, timestamp) AS dt "
                 f"FROM {config.table} "
@@ -440,7 +351,10 @@ class MeshtasticIngester:
 
     def _start_classification_refresh(self) -> None:
         """Start background thread that periodically refreshes the classification cache."""
-        if not self.ch_writer:
+        try:
+            import clickhouse_connect  # noqa: F401
+        except ImportError:
+            self.logger.info("clickhouse-connect not available, classification cache disabled")
             return
 
         def _refresh_loop():
@@ -467,9 +381,7 @@ class MeshtasticIngester:
 
     def _get_mqtt_source(self, region: str) -> str:
         """Derive MQTT data source label for topic routing."""
-        if MESHTASTIC_MODE == "community":
-            return "meshtastic-community"
-        return "meshtastic-community" if region == "LOCAL" else "meshtastic-downlink"
+        return "meshtastic"
 
     def _should_publish_telemetry(self, region: str) -> bool:
         """Check if this region is configured to publish environment telemetry."""
@@ -483,18 +395,13 @@ class MeshtasticIngester:
         reading_type: str, value: float, unit: str, timestamp: int,
     ) -> None:
         """
-        Process a single environmental reading: dedup -> geocode -> ClickHouse + MQTT.
+        Process a single environmental reading through the pipeline.
 
-        If position is unknown, caches reading for later processing.
+        Position correlation is Meshtastic-specific and happens here before
+        handing off to the pipeline. If position is unknown, the reading is
+        cached for later processing when a position arrives.
         """
-        # Dedup check
-        if self.dedup.is_duplicate(node_id, reading_type, timestamp):
-            self.logger.debug(
-                "DUPLICATE_SKIPPED | region=%s | node=%s | type=%s | value=%s",
-                region, node_id, reading_type, value,
-            )
-            return
-
+        # Position correlation (Meshtastic-specific — must happen before pipeline)
         position = self.stats[region]["positions"].get(node_id)
         if not position:
             # Cache for later when position arrives
@@ -515,6 +422,28 @@ class MeshtasticIngester:
         if not position.get("lat") or not position.get("lon"):
             return
 
+        # Hand off to pipeline — it handles dedup, geocode, sign, MQTT, gateway
+        processed = self.pipeline.process({
+            "device_id": node_id,
+            "timestamp": timestamp,
+            "reading_type": reading_type,
+            "value": value,
+            "unit": unit or "",
+            "latitude": position["lat"],
+            "longitude": position["lon"],
+            "altitude": position.get("alt"),
+            "data_source": DATA_SOURCE,
+            "data_source_name": DATA_SOURCE_NAME,
+            "sensor_transport": "lora",
+            "board_model": position.get("hardware") or "",
+            "node_name": position.get("name") or "",
+            "deployment_type": get_deployment_type_from_node_name(position.get("name")),
+            "network_source": "mqtt",
+        })
+
+        if not processed:
+            return
+
         # Track last environmental reading time
         cache_updated = False
         if "last_env_time" not in position or timestamp > position.get("last_env_time", 0):
@@ -527,105 +456,13 @@ class MeshtasticIngester:
                 self._save_cache(region, self.stats[region]["positions"])
                 self._save_counter[region] = 0
 
-        # Geocode
-        geo = self.geocoder.reverse_geocode(position["lat"], position["lon"])
-        country_code = geo["geo_country"] if geo else "unknown"
-        subdivision_code = geo["geo_subdivision"] if geo else "unknown"
-
-        mqtt_source = self._get_mqtt_source(region)
-
-        # Publish to MQTT
-        mqtt_dict = {
-            "timestamp": timestamp,
-            "device_id": node_id,
-            "name": position.get("name"),
-            "latitude": position["lat"],
-            "longitude": position["lon"],
-            "altitude": position.get("alt"),
-            "country": country_code,
-            "subdivision": subdivision_code,
-            "data_source": mqtt_source,
-            "geo_country": country_code,
-            "geo_subdivision": subdivision_code,
-            "reading_type": reading_type,
-            "value": value,
-            "unit": unit,
-            "board_model": position.get("hardware"),
-        }
-        self.publisher.publish_reading(mqtt_dict)
-
-        if self.zenoh_publisher:
-            deployment_type = get_deployment_type_from_node_name(position.get("name"))
-            if not deployment_type:
-                deployment_type = self._get_cached_deployment_type(node_id)
-            self.zenoh_publisher.publish_reading({
-                "device_id": node_id,
-                "data_source": DATA_SOURCE,
-                "network_source": region,
-                "ingestion_node_id": INGESTION_NODE_ID,
-                "geo_country": country_code,
-                "geo_subdivision": subdivision_code,
-                "timestamp": timestamp,
-                "latitude": position["lat"],
-                "longitude": position["lon"],
-                "altitude": position.get("alt"),
-                "transport_type": "LORA",
-                "reading_type": reading_type,
-                "value": value,
-                "unit": unit,
-                "board_model": position.get("hardware") or "",
-                "deployment_type": deployment_type,
-                "node_name": position.get("name"),
-                "location_source": "gps",
-            })
-
-        # Sign the reading for ClickHouse persistence
-        signing_dict = {
-            "device_id": node_id,
-            "data_source": DATA_SOURCE,
-            "timestamp": timestamp,
-            "reading_type": reading_type,
-            "value": value,
-            "latitude": position["lat"],
-            "longitude": position["lon"],
-            "transport_type": "LORA",
-        }
-        signed = self.signer.sign(json.dumps(signing_dict, sort_keys=True).encode())
-
-        # Write to ClickHouse
-        if self.ch_writer:
-            row = (
-                datetime.fromtimestamp(timestamp, tz=timezone.utc),
-                node_id,
-                DATA_SOURCE,
-                region,
-                INGESTION_NODE_ID,
-                reading_type,
-                float(value),
-                unit or "",
-                float(position["lat"]),
-                float(position["lon"]),
-                float(position["alt"]) if position.get("alt") else None,
-                country_code,
-                subdivision_code,
-                position.get("hardware") or "",
-                get_deployment_type_from_node_name(position.get("name")),
-                "LORA",
-                "gps",
-                position.get("name"),
-                signed.signature.hex(),
-                self.key_manager.ingester_id,
-                self.key_manager.key_version,
-            )
-            self.ch_writer.add(row)
-
-            status = "CACHE_UPDATED" if cache_updated else "CACHE_NOT_UPDATED"
-            self.logger.info(
-                "CLICKHOUSE_BUFFERED_%s | region=%s | node=%s | type=%s | value=%s | "
-                "lat=%s | lon=%s",
-                status, region, node_id, reading_type, value,
-                position["lat"], position["lon"],
-            )
+        status = "CACHE_UPDATED" if cache_updated else "CACHE_NOT_UPDATED"
+        self.logger.info(
+            "PIPELINE_PROCESSED_%s | region=%s | node=%s | type=%s | value=%s | "
+            "lat=%s | lon=%s",
+            status, region, node_id, reading_type, value,
+            position["lat"], position["lon"],
+        )
 
     # ── Protobuf handlers ────────────────────────────────────────────
 
@@ -907,23 +744,24 @@ class MeshtasticIngester:
         print("=" * 80)
         print(f"TOTAL Unique nodes with env data + position in last hour: {total_nodes_last_hour}")
 
-        dedup_stats = self.dedup.get_stats()
-        ch_stats = self.ch_writer.get_stats() if self.ch_writer else {"total_written": 0}
-        total = dedup_stats["duplicates_blocked"] + dedup_stats["unique_processed"]
+        pipeline_stats = self.pipeline.get_stats()
+        dedup_stats = pipeline_stats.get("dedup", {})
+        storage_stats = pipeline_stats.get("gateway", {"total_written": 0})
+        total = dedup_stats.get("duplicates_blocked", 0) + dedup_stats.get("unique_processed", 0)
         block_rate = (
-            dedup_stats["duplicates_blocked"] / total * 100 if total > 0 else 0
+            dedup_stats.get("duplicates_blocked", 0) / total * 100 if total > 0 else 0
         )
         print(
-            f"\nDEDUP: Total: {total} | Dups: {dedup_stats['duplicates_blocked']} "
-            f"({block_rate:.1f}%) | Unique: {dedup_stats['unique_processed']} | "
-            f"CH writes: {ch_stats['total_written']} | Cache: {dedup_stats['cache_size']}"
+            f"\nDEDUP: Total: {total} | Dups: {dedup_stats.get('duplicates_blocked', 0)} "
+            f"({block_rate:.1f}%) | Unique: {dedup_stats.get('unique_processed', 0)} | "
+            f"writes: {storage_stats.get('total_written', 0)} | Cache: {dedup_stats.get('cache_size', 0)}"
         )
         print("=" * 80)
 
     # ── Lifecycle ────────────────────────────────────────────────────
 
-    def shutdown(self, signum=None, frame=None) -> None:
-        """Graceful shutdown: save caches, flush ClickHouse, disconnect."""
+    def _cleanup(self) -> None:
+        """Graceful cleanup: save caches, flush ClickHouse, disconnect MQTT clients."""
         print("\n" + "=" * 60)
         print("Shutting down gracefully...")
 
@@ -941,30 +779,22 @@ class MeshtasticIngester:
                 if region in self.pending_telemetry:
                     self._save_pending_telemetry(region, self.pending_telemetry[region])
 
-        if self.ch_writer:
-            print("  Flushing ClickHouse buffer...")
-            self.ch_writer.close()
-
-        if hasattr(self, 'zenoh_queryable') and self.zenoh_queryable:
-            self.zenoh_queryable.close()
-        if hasattr(self, 'zenoh_publisher') and self.zenoh_publisher:
-            self.zenoh_publisher.close()
-        if hasattr(self, 'registry_client'):
-            self.registry_client.close()
-
         for client in self._source_clients:
-            client.loop_stop()
-            client.disconnect()
+            try:
+                client.loop_stop()
+                client.disconnect()
+            except Exception:
+                pass
 
-        self.publisher.close()
+        print("  Closing pipeline...")
+        self.pipeline.close()
+
         print("Shutdown complete.")
         print("=" * 60)
 
     def run(self) -> None:
         """Main entry point: connect to all regions and run the main loop."""
-        signal.signal(signal.SIGINT, self.shutdown)
-        signal.signal(signal.SIGTERM, self.shutdown)
-        atexit.register(self.shutdown)
+        shutdown = Shutdown(name="meshtastic")
 
         print("=" * 60)
         print(f"Meshtastic Ingester (mode={MESHTASTIC_MODE}, source={DATA_SOURCE})")
@@ -994,32 +824,36 @@ class MeshtasticIngester:
                 client_id=f"meshtastic_{region.lower()}",
             )
             client.username_pw_set(config.get("username", ""), config.get("password", ""))
+            configure_mqtt_tls(client)
             client.on_connect = self.create_connect_callback(region)
             client.on_message = self.create_message_callback(region)
 
             retry_delay = 5
-            connected = False
-            while not connected:
+            max_retries = 3
+            for attempt in range(max_retries + 1):
                 try:
                     client.connect(config["broker"], config.get("port", 1883), 60)
                     client.loop_start()
                     self._source_clients.append(client)
                     print(f"[{region}] Connected to {config['broker']}")
-                    connected = True
+                    break
                 except (ConnectionRefusedError, OSError) as e:
-                    print(f"[{region}] Broker not available ({e}), retrying in {retry_delay}s")
-                    time.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 2, 60)
+                    if attempt < max_retries:
+                        print(f"[{region}] Broker not available ({e}), retrying in {retry_delay}s")
+                        time.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 2, 60)
+                    else:
+                        print(f"[{region}] Broker unreachable after {max_retries} retries, skipping")
 
         print(f"\nAll decoders running. Press Ctrl+C to stop.")
 
-        try:
-            while True:
-                time.sleep(STATS_INTERVAL)
-                self.print_stats()
-        except KeyboardInterrupt:
-            self.shutdown()
-            sys.exit(0)
+        while not shutdown.requested:
+            shutdown.sleep(STATS_INTERVAL)
+            if shutdown.requested:
+                break
+            self.print_stats()
+
+        self._cleanup()
 
 
 def main():
