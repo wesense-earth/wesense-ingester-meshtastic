@@ -132,4 +132,4 @@ Publishes decoded readings to MQTT topic `wesense/decoded/{source}/{country}/{su
 
 ## License
 
-MIT
+AGPL-3.0
