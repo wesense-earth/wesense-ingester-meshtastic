@@ -11,24 +11,29 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy dependency files first for better layer caching
+# Bust cache when ingester-core or app code changes
+ARG CACHE_BUST=1
+
 COPY wesense-ingester-core/ /tmp/wesense-ingester-core/
 COPY wesense-ingester-meshtastic/requirements-docker.txt .
 
 # Install gcc, build all pip packages, then remove gcc in one layer
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc && \
-    pip install --no-cache-dir "/tmp/wesense-ingester-core[p2p]" && \
+    apt-get install -y --no-install-recommends gcc libc-dev && \
+    pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir "/tmp/wesense-ingester-core" && \
     pip install --no-cache-dir -r requirements-docker.txt && \
     apt-get purge -y --auto-remove gcc && \
     rm -rf /var/lib/apt/lists/* /tmp/wesense-ingester-core
 
 # Copy application code
 COPY wesense-ingester-meshtastic/meshtastic_ingester.py .
+COPY wesense-ingester-meshtastic/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # Create directories for cache, logs, and config
 RUN mkdir -p /app/cache /app/logs /app/config
 
 ENV TZ=UTC
 
-CMD ["python", "-u", "meshtastic_ingester.py"]
+ENTRYPOINT ["/app/entrypoint.sh"]
