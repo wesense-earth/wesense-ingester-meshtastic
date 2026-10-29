@@ -14,7 +14,7 @@ packaging==25.0
 paho-mqtt==2.1.0
 pexpect==4.9.0
 propcache==0.5.4
-protobuf==6.33.0
+protobuf==6.33.5
 ptyprocess==0.7.0
 Pypubsub==4.0.7
 PyQRCode==1.2.1
