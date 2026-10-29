@@ -36,4 +36,4 @@ typing_extensions==4.16.0
 urllib3==2.8.0
 yarl==1.25.1
 reverse_geocoder==1.5.1
-cryptography>=41.0.0
+cryptography>=50.0.2
