@@ -31,6 +31,8 @@ from wesense_ingester.clickhouse.writer import ClickHouseConfig
 from wesense_ingester.mqtt.publisher import MQTTPublisherConfig, configure_mqtt_tls
 from wesense_ingester.pipeline import ReadingPipeline
 
+from region_config import region_password
+
 # ── AES decryption (adapter-specific) ────────────────────────────────
 try:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -823,7 +825,7 @@ class MeshtasticIngester:
                 mqtt.CallbackAPIVersion.VERSION2,
                 client_id=f"meshtastic_{region.lower()}",
             )
-            client.username_pw_set(config.get("username", ""), config.get("password", ""))
+            client.username_pw_set(config.get("username", ""), region_password(region, config))
             configure_mqtt_tls(client)
             client.on_connect = self.create_connect_callback(region)
             client.on_message = self.create_message_callback(region)

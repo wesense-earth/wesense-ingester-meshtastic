@@ -127,6 +127,10 @@ jobs:
           ref: ${{ github.head_ref || github.ref_name }}
           path: wesense-ingester-meshtastic
 
+      - name: Unit tests
+        working-directory: wesense-ingester-meshtastic
+        run: python3 -m unittest test_region_config -v
+
       - name: Checkout core library (matching branch, fallback to main)
         id: checkout-core
         uses: actions/checkout@v7
