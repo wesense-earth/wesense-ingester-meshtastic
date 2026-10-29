@@ -32,6 +32,8 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from collections import defaultdict
 
+from region_config import region_password
+
 # Configuration
 def load_regions_config(config_file='config/mqtt_regions.json'):
     """Load MQTT regions configuration from external JSON file"""
@@ -228,7 +230,7 @@ def main():
             mqtt.CallbackAPIVersion.VERSION2,
             client_id=f"meshtastic_fwd_{region.lower()}"
         )
-        client.username_pw_set(config['username'], config['password'])
+        client.username_pw_set(config['username'], region_password(region, config))
         client.on_connect = create_connect_callback(region)
         client.on_message = create_message_callback(region)
 
