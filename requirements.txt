@@ -10,7 +10,7 @@ frozenlist==1.8.0
 idna==3.20
 clickhouse-connect==0.8.14
 meshtastic==2.7.11
-multidict==6.7.0
+multidict==6.9.1
 packaging==25.0
 paho-mqtt==2.1.0
 pexpect==4.9.0
