@@ -33,7 +33,7 @@
     "broker": "your-local-mqtt-broker",
     "port": 1883,
     "username": "your-mqtt-username",
-    "password": "your-mqtt-password",
+    "password_env": "LOCAL_MQTT_PASSWORD",
     "topic": "msh/ANZ/2/e/#",
     "cache_file": "cache/meshtastic_cache_local.json",
     "enabled": false,

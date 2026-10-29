@@ -1565,7 +1565,7 @@ REGIONS_ORIG = {
         'broker': '192.168.43.11',
         'port': 1883,
         'username': 'mqttuser',
-        'password': 'REDACTED-MQTT-PASSWORD',
+        'password': os.environ['LOCAL_MQTT_PASSWORD'],
         'topic': 'msh/ANZ/2/e/#',
         'cache_file': 'cache/meshtastic_cache_local.json',
         'enabled': True,

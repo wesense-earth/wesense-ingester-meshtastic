@@ -28,6 +28,7 @@ RUN apt-get update && \
 
 # Copy application code
 COPY wesense-ingester-meshtastic/meshtastic_ingester.py .
+COPY wesense-ingester-meshtastic/region_config.py .
 COPY wesense-ingester-meshtastic/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
