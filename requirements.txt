@@ -24,7 +24,7 @@ pyobjc-framework-libdispatch==12.2.2
 Pypubsub==4.0.7
 PyQRCode==1.2.1
 pyserial==3.5
-python-dateutil==2.9.0.post0
+python-dateutil==3.0.0
 PyYAML==6.0.3
 reactivex==4.0.4
 requests==2.34.2
