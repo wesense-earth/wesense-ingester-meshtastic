@@ -20,7 +20,7 @@ ptyprocess==0.7.0
 pyobjc-core==12.2.2
 pyobjc-framework-Cocoa==12.2.2
 pyobjc-framework-CoreBluetooth==12.2.2
-pyobjc-framework-libdispatch==12.2.2
+pyobjc-framework-libdispatch==13.0
 Pypubsub==4.0.7
 PyQRCode==1.2.1
 pyserial==3.5
