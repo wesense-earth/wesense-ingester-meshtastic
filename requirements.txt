@@ -17,7 +17,7 @@ pexpect==4.9.0
 propcache==0.5.4
 protobuf==6.33.5
 ptyprocess==0.7.0
-pyobjc-core==12.2.2
+pyobjc-core==13.1
 pyobjc-framework-Cocoa==12.2.2
 pyobjc-framework-CoreBluetooth==12.2.2
 pyobjc-framework-libdispatch==13.1
